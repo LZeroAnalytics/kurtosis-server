@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/gorilla/websocket"
+	"github.com/kurtosis-tech/kurtosis/api/golang/core/kurtosis_core_rpc_api_bindings"
 	"github.com/kurtosis-tech/kurtosis/api/golang/core/lib/starlark_run_config"
 	"github.com/kurtosis-tech/kurtosis/api/golang/engine/lib/kurtosis_context"
 	"log"
@@ -76,16 +77,68 @@ func runPackage(w http.ResponseWriter, r *http.Request, enclaveName, packageURL 
 
 	// Stream response lines
 	for line := range responseLines {
-		message, err := json.Marshal(line)
-		if err != nil {
-			conn.WriteMessage(websocket.TextMessage, []byte("Failed to serialize response line: "+err.Error()))
+		if line == nil {
 			continue
 		}
-		if err := conn.WriteMessage(websocket.TextMessage, message); err != nil {
-			log.Printf("Failed to send message: %v", err)
-			break
+
+		switch detail := line.RunResponseLine.(type) {
+		case *kurtosis_core_rpc_api_bindings.StarlarkRunResponseLine_ProgressInfo:
+			// Handle ProgressInfo
+			progress := detail.ProgressInfo
+			if len(progress.CurrentStepInfo) > 0 {
+				output := map[string]interface{}{
+					"info":         progress.CurrentStepInfo[0],
+					"current_step": progress.CurrentStepNumber,
+					"total_steps":  progress.TotalSteps,
+				}
+				outputJSON, err := json.Marshal(output)
+				if err != nil {
+					log.Printf("Error marshaling progress output: %v", err)
+					continue
+				}
+				conn.WriteMessage(websocket.TextMessage, outputJSON)
+			}
+		case *kurtosis_core_rpc_api_bindings.StarlarkRunResponseLine_InstructionResult:
+			// Handle InstructionResult
+			result := detail.InstructionResult
+			output := map[string]interface{}{
+				"info": result.SerializedInstructionResult,
+			}
+			outputJSON, err := json.Marshal(output)
+			if err != nil {
+				log.Printf("Error marshaling instruction result output: %v", err)
+				continue
+			}
+			conn.WriteMessage(websocket.TextMessage, outputJSON)
+		case *kurtosis_core_rpc_api_bindings.StarlarkRunResponseLine_Error:
+			// Handle Error
+			log.Printf("Error during Starlark execution: %v", detail.Error)
+			conn.WriteMessage(websocket.TextMessage, []byte("Error: "+detail.Error.String()))
+		case *kurtosis_core_rpc_api_bindings.StarlarkRunResponseLine_Warning:
+			// Handle Warning
+			log.Printf("Warning: %s", detail.Warning.WarningMessage)
+		case *kurtosis_core_rpc_api_bindings.StarlarkRunResponseLine_RunFinishedEvent:
+			// Handle RunFinishedEvent
+			if detail.RunFinishedEvent.IsRunSuccessful {
+				output := map[string]interface{}{
+					"info": "Network run successfully",
+				}
+				outputJSON, err := json.Marshal(output)
+				if err != nil {
+					log.Printf("Error marshaling progress output: %v", err)
+					continue
+				}
+				conn.WriteMessage(websocket.TextMessage, outputJSON)
+			} else {
+				log.Println("Starlark script failed to complete.")
+			}
+		case *kurtosis_core_rpc_api_bindings.StarlarkRunResponseLine_Info:
+			continue
+		case *kurtosis_core_rpc_api_bindings.StarlarkRunResponseLine_Instruction:
+			continue
+		default:
+			// Handle unexpected type
+			log.Printf("Received unexpected type in response line: %T", detail)
 		}
 	}
-
-	conn.WriteMessage(websocket.TextMessage, []byte("Enclave run completed successfully"))
 }
