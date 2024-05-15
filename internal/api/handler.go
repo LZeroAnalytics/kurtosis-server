@@ -13,35 +13,28 @@ import (
 )
 
 var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
 	CheckOrigin: func(r *http.Request) bool {
 		return true
 	},
+}
+
+type RunPackageMessage struct {
+	PackageURL string                 `json:"package_url"`
+	Params     map[string]interface{} `json:"params"`
 }
 
 func HandleRoot(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintln(w, "Welcome to the Kurtosis API Server")
 }
 
-func HandleRun(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
+func RunPackage(w http.ResponseWriter, r *http.Request) {
+	// Extract enclaveName from query parameters
 	enclaveName := r.URL.Query().Get("enclaveName")
-	packageURL := r.URL.Query().Get("packageURL")
-	if enclaveName == "" || packageURL == "" {
-		http.Error(w, "Missing required parameters", http.StatusBadRequest)
+	if enclaveName == "" {
+		http.Error(w, "Missing enclaveName query parameter", http.StatusBadRequest)
 		return
 	}
 
-	// Now you have req.EnclaveName and req.PackageURL
-	runPackage(w, r, enclaveName, packageURL)
-}
-
-func runPackage(w http.ResponseWriter, r *http.Request, enclaveName, packageURL string) {
 	// Upgrade HTTP connection to WebSocket
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -49,6 +42,27 @@ func runPackage(w http.ResponseWriter, r *http.Request, enclaveName, packageURL 
 		return
 	}
 	defer conn.Close()
+
+	// Read the initial message containing the package URL and parameters
+	_, message, err := conn.ReadMessage()
+	if err != nil {
+		log.Printf("Error reading message: %v", err)
+		return
+	}
+
+	var runPackageMessage RunPackageMessage
+	err = json.Unmarshal(message, &runPackageMessage)
+	if err != nil {
+		conn.WriteMessage(websocket.TextMessage, []byte("Invalid message format: "+err.Error()))
+		return
+	}
+
+	// Serialize the Params to JSON
+	paramsJSON, err := json.Marshal(runPackageMessage.Params)
+	if err != nil {
+		conn.WriteMessage(websocket.TextMessage, []byte("Failed to serialize parameters: "+err.Error()))
+		return
+	}
 
 	// Initialize the Kurtosis context
 	kurtosisCtx, err := kurtosis_context.NewKurtosisContextFromLocalEngine()
@@ -64,11 +78,12 @@ func runPackage(w http.ResponseWriter, r *http.Request, enclaveName, packageURL 
 		return
 	}
 
-	// Define the StarlarkRunConfig
-	starlarkRunConfig := starlark_run_config.NewRunStarlarkConfig()
+	// Define the StarlarkRunConfig with parameters
+	starlarkRunOptions := starlark_run_config.WithSerializedParams(string(paramsJSON))
+	starlarkRunConfig := starlark_run_config.NewRunStarlarkConfig(starlarkRunOptions)
 
 	// Run the Starlark package
-	responseLines, cancelFunc, err := enclaveCtx.RunStarlarkRemotePackage(r.Context(), packageURL, starlarkRunConfig)
+	responseLines, cancelFunc, err := enclaveCtx.RunStarlarkRemotePackage(r.Context(), runPackageMessage.PackageURL, starlarkRunConfig)
 	if err != nil {
 		conn.WriteMessage(websocket.TextMessage, []byte("Failed to run Starlark package: "+err.Error()))
 		return
@@ -141,4 +156,30 @@ func runPackage(w http.ResponseWriter, r *http.Request, enclaveName, packageURL 
 			log.Printf("Received unexpected type in response line: %T", detail)
 		}
 	}
+}
+
+func StopPackage(w http.ResponseWriter, r *http.Request) {
+	// Extract enclaveIdentifier from query parameters
+	enclaveIdentifier := r.URL.Query().Get("enclaveIdentifier")
+	if enclaveIdentifier == "" {
+		http.Error(w, "Missing enclaveIdentifier query parameter", http.StatusBadRequest)
+		return
+	}
+
+	// Initialize the Kurtosis context
+	kurtosisCtx, err := kurtosis_context.NewKurtosisContextFromLocalEngine()
+	if err != nil {
+		http.Error(w, "Failed to create Kurtosis context: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Destroy the enclave
+	err = kurtosisCtx.DestroyEnclave(context.Background(), enclaveIdentifier)
+	if err != nil {
+		http.Error(w, "Failed to destroy enclave: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Write([]byte("Enclave destroyed successfully"))
 }
