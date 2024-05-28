@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>WebSocket Test Client</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js"></script>
+    <script>
+        document.addEventListener("DOMContentLoaded", function() {
+            const output = document.getElementById('output');
+            const btnConnect = document.getElementById('btnConnect');
+            const btnDisconnect = document.getElementById('btnDisconnect');
+            const btnSendParams = document.getElementById('btnSendParams');
+            const btnDestroyEnclave = document.getElementById('btnDestroyEnclave');
+            const btnGetServicesInfo = document.getElementById('btnGetServicesInfo');
+            const btnConnectService = document.getElementById('btnConnectService');
+            const btnDisconnectService = document.getElementById('btnDisconnectService');
+            const btnExecCommand = document.getElementById('btnExecCommand');
+            const paramsInput = document.getElementById('paramsInput');
+            const commandInput = document.getElementById('commandInput');
+            const serviceDropdown = document.getElementById('serviceDropdown');
+            let socket;
+            let connectedService = null;
+
+            function logMessage(message) {
+                const p = document.createElement('p');
+                p.innerText = message;
+                output.appendChild(p);
+            }
+
+            btnConnect.addEventListener('click', function() {
+                const enclaveName = "myTestnet"; // Set these accordingly
+                const wsUrl = `ws://localhost:8080/run?enclaveName=${encodeURIComponent(enclaveName)}`;
+                socket = new WebSocket(wsUrl);
+
+                socket.onopen = function() {
+                    logMessage('Connected');
+                };
+
+                socket.onmessage = function(event) {
+                    logMessage('Received: ' + event.data);
+                };
+
+                socket.onclose = function(event) {
+                    logMessage('Disconnected. Code: ' + event.code + ', Reason: ' + event.reason);
+                };
+
+                socket.onerror = function(error) {
+                    logMessage('Error: ' + error.message);
+                };
+            });
+
+            btnDisconnect.addEventListener('click', function() {
+                if (socket) {
+                    socket.close();
+                }
+            });
+
+            btnSendParams.addEventListener('click', function() {
+                if (socket && socket.readyState === WebSocket.OPEN) {
+                    const packageURL = "github.com/LZeroAnalytics/coreum-package";
+                    const paramsYAML = paramsInput.value;
+                    const params = jsyaml.load(paramsYAML);
+                    const message = {
+                        package_url: packageURL,
+                        params: params
+                    };
+                    socket.send(JSON.stringify(message));
+                }
+            });
+
+            btnDestroyEnclave.addEventListener('click', function() {
+                const enclaveIdentifier = "myTestnet"; // Set the enclave identifier accordingly
+                fetch(`http://localhost:8080/stop?enclaveIdentifier=${encodeURIComponent(enclaveIdentifier)}`)
+                    .then(response => response.text())
+                    .then(text => logMessage('Destroy Enclave Response: ' + text))
+                    .catch(error => logMessage('Error: ' + error.message));
+            });
+
+            btnGetServicesInfo.addEventListener('click', function() {
+                const enclaveIdentifier = "myTestnet"; // Set the enclave identifier accordingly
+                fetch(`http://localhost:8080/services?enclaveIdentifier=${encodeURIComponent(enclaveIdentifier)}`)
+                    .then(response => response.json())
+                    .then(json => {
+                        logMessage('Services Info: ' + JSON.stringify(json, null, 2));
+                        // Populate the dropdown with service names
+                        serviceDropdown.innerHTML = '';
+                        for (const serviceName in json) {
+                            const option = document.createElement('option');
+                            option.value = serviceName;
+                            option.text = serviceName;
+                            serviceDropdown.appendChild(option);
+                        }
+                    })
+                    .catch(error => logMessage('Error: ' + error.message));
+            });
+
+            btnConnectService.addEventListener('click', function() {
+                const selectedService = serviceDropdown.value;
+                if (selectedService) {
+                    connectedService = selectedService;
+                    logMessage('Connected to service: ' + connectedService);
+                }
+            });
+
+            btnDisconnectService.addEventListener('click', function() {
+                connectedService = null;
+                logMessage('Disconnected from service');
+            });
+
+            btnExecCommand.addEventListener('click', function() {
+                if (!connectedService) {
+                    logMessage('No service connected');
+                    return;
+                }
+                const enclaveIdentifier = "myTestnet"; // Set the enclave identifier accordingly
+                const command = commandInput.value.split(' '); // Split the command into an array
+                const requestBody = {
+                    enclaveIdentifier: enclaveIdentifier,
+                    serviceName: connectedService,
+                    command: command
+                };
+                fetch('http://localhost:8080/exec', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(requestBody)
+                })
+                    .then(response => response.json())
+                    .then(json => logMessage('Command Execution Result: ' + JSON.stringify(json, null, 2)))
+                    .catch(error => logMessage('Error: ' + error.message));
+            });
+        });
+    </script>
+</head>
+<body>
+<button id="btnConnect">Connect</button>
+<button id="btnDisconnect">Disconnect</button>
+<textarea id="paramsInput" rows="10" cols="50">chains:
+      - name: coreum-testnet
+        type: coreum
+        participants:
+          - count: 2
+        additional_services: []
+    </textarea>
+<button id="btnSendParams">Send Params</button>
+<button id="btnDestroyEnclave">Destroy Enclave</button>
+<button id="btnGetServicesInfo">Get Services Info</button>
+<select id="serviceDropdown"></select>
+<button id="btnConnectService">Connect to Service</button>
+<button id="btnDisconnectService">Disconnect from Service</button>
+<input id="commandInput" type="text" placeholder="Enter command" />
+<button id="btnExecCommand">Execute Command</button>
+<div id="output"></div>
+</body>
+</html>

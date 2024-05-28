@@ -23,6 +23,12 @@ type RunPackageMessage struct {
 	Params     map[string]interface{} `json:"params"`
 }
 
+type ExecCommandRequest struct {
+	EnclaveIdentifier string   `json:"enclaveIdentifier"`
+	ServiceName       string   `json:"serviceName"`
+	Command           []string `json:"command"`
+}
+
 func HandleRoot(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintln(w, "Welcome to the Kurtosis API Server")
 }
@@ -182,4 +188,127 @@ func StopPackage(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Write([]byte("Enclave destroyed successfully"))
+}
+
+func GetServicesInfo(w http.ResponseWriter, r *http.Request) {
+	// Extract enclaveIdentifier from query parameters
+	enclaveIdentifier := r.URL.Query().Get("enclaveIdentifier")
+
+	if enclaveIdentifier == "" {
+		http.Error(w, "Missing enclaveIdentifier query parameter", http.StatusBadRequest)
+		return
+	}
+
+	// Initialize the Kurtosis context
+	kurtosisCtx, err := kurtosis_context.NewKurtosisContextFromLocalEngine()
+	if err != nil {
+		http.Error(w, "Failed to create Kurtosis context: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Get the EnclaveContext
+	enclaveCtx, err := kurtosisCtx.GetEnclaveContext(context.Background(), enclaveIdentifier)
+	if err != nil {
+		http.Error(w, "Failed to get EnclaveContext: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Get the service identifiers
+	serviceIdentifiers, err := enclaveCtx.GetServices()
+	if err != nil {
+		http.Error(w, "Failed to get services: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Convert service identifiers to the format needed by GetServiceContexts
+	serviceIdentifiersMap := make(map[string]bool)
+	for serviceName := range serviceIdentifiers {
+		serviceIdentifiersMap[string(serviceName)] = true
+	}
+
+	// Get the detailed service contexts
+	serviceContexts, err := enclaveCtx.GetServiceContexts(serviceIdentifiersMap)
+	if err != nil {
+		http.Error(w, "Failed to get service contexts: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Construct the detailed information
+	servicesInfo := make(map[string]interface{})
+	for _, serviceContext := range serviceContexts {
+		serviceInfo := map[string]interface{}{
+			"service_uuid":       serviceContext.GetServiceUUID(),
+			"private_ip_address": serviceContext.GetPrivateIPAddress(),
+			"private_ports":      serviceContext.GetPrivatePorts(),
+			"public_ip_address":  serviceContext.GetMaybePublicIPAddress(),
+			"public_ports":       serviceContext.GetPublicPorts(),
+		}
+		servicesInfo[string(serviceContext.GetServiceName())] = serviceInfo
+	}
+
+	// Serialize the detailed information to JSON
+	servicesInfoJSON, err := json.Marshal(servicesInfo)
+	if err != nil {
+		http.Error(w, "Failed to serialize services information: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Set CORS headers and return the response
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(servicesInfoJSON)
+}
+
+func ExecServiceCommand(w http.ResponseWriter, r *http.Request) {
+	var req ExecCommandRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Initialize the Kurtosis context
+	kurtosisCtx, err := kurtosis_context.NewKurtosisContextFromLocalEngine()
+	if err != nil {
+		http.Error(w, "Failed to create Kurtosis context: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Get the EnclaveContext
+	enclaveCtx, err := kurtosisCtx.GetEnclaveContext(context.Background(), req.EnclaveIdentifier)
+	if err != nil {
+		http.Error(w, "Failed to get EnclaveContext: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Get the ServiceContext
+	serviceCtx, err := enclaveCtx.GetServiceContext(req.ServiceName)
+	if err != nil {
+		http.Error(w, "Failed to get ServiceContext: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Execute the command
+	exitCode, logs, err := serviceCtx.ExecCommand(req.Command)
+	if err != nil {
+		http.Error(w, "Failed to execute command: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Construct the response
+	response := map[string]interface{}{
+		"exit_code": exitCode,
+		"logs":      logs,
+	}
+
+	// Serialize the response to JSON
+	responseJSON, err := json.Marshal(response)
+	if err != nil {
+		http.Error(w, "Failed to serialize response: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Set CORS headers and return the response
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(responseJSON)
 }
