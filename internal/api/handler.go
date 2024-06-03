@@ -51,6 +51,7 @@ func RunPackage(w http.ResponseWriter, r *http.Request) {
 	enclaveName := r.URL.Query().Get("enclaveName")
 	sessionID := r.URL.Query().Get("sessionID")
 
+	log.Printf("Run Package called: %s", sessionID)
 	// Upgrade HTTP connection to WebSocket
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -64,8 +65,13 @@ func RunPackage(w http.ResponseWriter, r *http.Request) {
 	if session, exists := sessions[sessionID]; exists {
 		// Existing session found, re-attach the WebSocket connection
 		session.Conn = conn
+		log.Printf("Re-attaching WebSocket connection for session ID: %s", sessionID)
+		log.Printf("Attempting to send the response lines: %v", session.ResponseLines)
 		for _, message := range session.ResponseLines {
-			conn.WriteMessage(websocket.TextMessage, []byte(message))
+			err := conn.WriteMessage(websocket.TextMessage, []byte(message))
+			if err != nil {
+				log.Printf("Error sending stored message: %v", err)
+			}
 		}
 		sessionsMu.Unlock()
 		return
