@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/kurtosis-tech/kurtosis/api/golang/core/kurtosis_core_rpc_api_bindings"
 	"github.com/kurtosis-tech/kurtosis/api/golang/core/lib/starlark_run_config"
 	"github.com/kurtosis-tech/kurtosis/api/golang/engine/lib/kurtosis_context"
 	"log"
 	"net/http"
+	"sync"
 )
 
 var upgrader = websocket.Upgrader{
@@ -29,17 +31,25 @@ type ExecCommandRequest struct {
 	Command           []string `json:"command"`
 }
 
+type Session struct {
+	Conn          *websocket.Conn
+	ResponseLines []string
+	CancelFunc    context.CancelFunc
+}
+
+var (
+	sessions   = make(map[string]*Session)
+	sessionsMu sync.Mutex
+)
+
 func HandleRoot(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintln(w, "Welcome to the Kurtosis API Server")
 }
 
 func RunPackage(w http.ResponseWriter, r *http.Request) {
-	// Extract enclaveName from query parameters
+	// Extract enclaveName and sessionID from query parameters
 	enclaveName := r.URL.Query().Get("enclaveName")
-	if enclaveName == "" {
-		http.Error(w, "Missing enclaveName query parameter", http.StatusBadRequest)
-		return
-	}
+	sessionID := r.URL.Query().Get("sessionID")
 
 	// Upgrade HTTP connection to WebSocket
 	conn, err := upgrader.Upgrade(w, r, nil)
@@ -48,6 +58,24 @@ func RunPackage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
+
+	// Handle reconnection logic
+	sessionsMu.Lock()
+	if session, exists := sessions[sessionID]; exists {
+		// Existing session found, re-attach the WebSocket connection
+		session.Conn = conn
+		for _, message := range session.ResponseLines {
+			conn.WriteMessage(websocket.TextMessage, []byte(message))
+		}
+		sessionsMu.Unlock()
+		return
+	}
+	sessionsMu.Unlock()
+
+	// Generate a new session ID if not provided
+	if sessionID == "" {
+		sessionID = uuid.New().String()
+	}
 
 	// Read the initial message containing the package URL and parameters
 	_, message, err := conn.ReadMessage()
@@ -96,12 +124,22 @@ func RunPackage(w http.ResponseWriter, r *http.Request) {
 	}
 	defer cancelFunc()
 
+	// Store the session
+	sessionsMu.Lock()
+	sessions[sessionID] = &Session{
+		Conn:          conn,
+		ResponseLines: []string{},
+		CancelFunc:    cancelFunc,
+	}
+	sessionsMu.Unlock()
+
 	// Stream response lines
 	for line := range responseLines {
 		if line == nil {
 			continue
 		}
 
+		var outputJSON []byte
 		switch detail := line.RunResponseLine.(type) {
 		case *kurtosis_core_rpc_api_bindings.StarlarkRunResponseLine_ProgressInfo:
 			// Handle ProgressInfo
@@ -112,12 +150,7 @@ func RunPackage(w http.ResponseWriter, r *http.Request) {
 					"current_step": progress.CurrentStepNumber,
 					"total_steps":  progress.TotalSteps,
 				}
-				outputJSON, err := json.Marshal(output)
-				if err != nil {
-					log.Printf("Error marshaling progress output: %v", err)
-					continue
-				}
-				conn.WriteMessage(websocket.TextMessage, outputJSON)
+				outputJSON, err = json.Marshal(output)
 			}
 		case *kurtosis_core_rpc_api_bindings.StarlarkRunResponseLine_InstructionResult:
 			// Handle InstructionResult
@@ -125,31 +158,22 @@ func RunPackage(w http.ResponseWriter, r *http.Request) {
 			output := map[string]interface{}{
 				"info": result.SerializedInstructionResult,
 			}
-			outputJSON, err := json.Marshal(output)
-			if err != nil {
-				log.Printf("Error marshaling instruction result output: %v", err)
-				continue
-			}
-			conn.WriteMessage(websocket.TextMessage, outputJSON)
+			outputJSON, err = json.Marshal(output)
 		case *kurtosis_core_rpc_api_bindings.StarlarkRunResponseLine_Error:
 			// Handle Error
 			log.Printf("Error during Starlark execution: %v", detail.Error)
-			conn.WriteMessage(websocket.TextMessage, []byte("Error: "+detail.Error.String()))
+			outputJSON = []byte("Error: " + detail.Error.String())
 		case *kurtosis_core_rpc_api_bindings.StarlarkRunResponseLine_Warning:
 			// Handle Warning
 			log.Printf("Warning: %s", detail.Warning.WarningMessage)
+			continue
 		case *kurtosis_core_rpc_api_bindings.StarlarkRunResponseLine_RunFinishedEvent:
 			// Handle RunFinishedEvent
 			if detail.RunFinishedEvent.IsRunSuccessful {
 				output := map[string]interface{}{
 					"info": "Network run successfully",
 				}
-				outputJSON, err := json.Marshal(output)
-				if err != nil {
-					log.Printf("Error marshaling progress output: %v", err)
-					continue
-				}
-				conn.WriteMessage(websocket.TextMessage, outputJSON)
+				outputJSON, err = json.Marshal(output)
 			} else {
 				log.Println("Starlark script failed to complete.")
 			}
@@ -160,7 +184,19 @@ func RunPackage(w http.ResponseWriter, r *http.Request) {
 		default:
 			// Handle unexpected type
 			log.Printf("Received unexpected type in response line: %T", detail)
+			continue
 		}
+
+		if err != nil {
+			log.Printf("Error marshaling output: %v", err)
+			continue
+		}
+
+		// Send the message and store it in the session
+		conn.WriteMessage(websocket.TextMessage, outputJSON)
+		sessionsMu.Lock()
+		sessions[sessionID].ResponseLines = append(sessions[sessionID].ResponseLines, string(outputJSON))
+		sessionsMu.Unlock()
 	}
 }
 
