@@ -74,6 +74,7 @@ func RunPackage(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		sessionsMu.Unlock()
+		keepConnectionAlive(session)
 		return
 	}
 	sessionsMu.Unlock()
@@ -353,4 +354,15 @@ func ExecServiceCommand(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(responseJSON)
+}
+
+func keepConnectionAlive(session *Session) {
+	for {
+		_, message, err := session.Conn.ReadMessage()
+		if err != nil {
+			log.Printf("Error reading message: %v", err)
+			break
+		}
+		log.Printf("Received message from client: %s", string(message))
+	}
 }
