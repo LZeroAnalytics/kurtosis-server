@@ -3,6 +3,8 @@ module kurtosis-server
 go 1.22.0
 
 require (
+	github.com/go-redis/redis/v8 v8.11.5
+	github.com/google/uuid v1.4.0
 	github.com/gorilla/websocket v1.5.1
 	github.com/kurtosis-tech/kurtosis/api/golang v0.89.7
 )
@@ -10,13 +12,14 @@ require (
 require (
 	github.com/Masterminds/semver/v3 v3.1.1 // indirect
 	github.com/adrg/xdg v0.4.0 // indirect
+	github.com/cespare/xxhash/v2 v2.2.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
+	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/dsnet/compress v0.0.2-0.20210315054119-f66993602bf5 // indirect
 	github.com/ghodss/yaml v1.0.0 // indirect
 	github.com/go-yaml/yaml v2.1.0+incompatible // indirect
 	github.com/golang/protobuf v1.5.3 // indirect
 	github.com/golang/snappy v0.0.4 // indirect
-	github.com/google/uuid v1.4.0 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	github.com/kurtosis-tech/kurtosis-portal/api/golang v0.0.0-20230818182330-1a86869414d2 // indirect
 	github.com/kurtosis-tech/kurtosis/contexts-config-store v0.0.0-20230818184218-f4e3e773463b // indirect

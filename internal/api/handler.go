@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/go-redis/redis/v8"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/kurtosis-tech/kurtosis/api/golang/core/kurtosis_core_rpc_api_bindings"
@@ -11,7 +12,6 @@ import (
 	"github.com/kurtosis-tech/kurtosis/api/golang/engine/lib/kurtosis_context"
 	"log"
 	"net/http"
-	"sync"
 )
 
 var upgrader = websocket.Upgrader{
@@ -37,10 +37,38 @@ type Session struct {
 	CancelFunc    context.CancelFunc
 }
 
-var (
-	sessions   = make(map[string]*Session)
-	sessionsMu sync.Mutex
-)
+var ctx = context.Background()
+var redisClient *redis.Client
+
+func init() {
+	redisClient = redis.NewClient(&redis.Options{
+		Addr:     "lzero-api-redis-g0loij.serverless.euw1.cache.amazonaws.com:6379", // Replace with your Redis endpoint
+		Password: "",                                                                // No password set
+		DB:       0,                                                                 // Use default DB
+	})
+}
+
+func storeSession(sessionID string, session *Session) error {
+	sessionData, err := json.Marshal(session)
+	if err != nil {
+		return err
+	}
+	err = redisClient.Set(ctx, sessionID, sessionData, 0).Err()
+	return err
+}
+
+func getSession(sessionID string) (*Session, error) {
+	sessionData, err := redisClient.Get(ctx, sessionID).Result()
+	if err != nil {
+		return nil, err
+	}
+	var session Session
+	err = json.Unmarshal([]byte(sessionData), &session)
+	if err != nil {
+		return nil, err
+	}
+	return &session, nil
+}
 
 func HandleRoot(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintln(w, "Welcome to the Kurtosis API Server")
@@ -51,7 +79,7 @@ func RunPackage(w http.ResponseWriter, r *http.Request) {
 	enclaveName := r.URL.Query().Get("enclaveName")
 	sessionID := r.URL.Query().Get("sessionID")
 
-	log.Printf("Run Package called: %s", sessionID)
+	log.Println("Run Package called")
 	// Upgrade HTTP connection to WebSocket
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -60,26 +88,23 @@ func RunPackage(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	// Handle reconnection logic
-	sessionsMu.Lock()
-	if session, exists := sessions[sessionID]; exists {
-		// Existing session found, re-attach the WebSocket connection
-		session.Conn = conn
-		log.Printf("Re-attaching WebSocket connection for session ID: %s", sessionID)
-		log.Printf("Attempting to send the response lines: %v", session.ResponseLines)
-		for _, message := range session.ResponseLines {
-			err := conn.WriteMessage(websocket.TextMessage, []byte(message))
-			if err != nil {
-				log.Printf("Error sending stored message: %v", err)
+	if sessionID != "" {
+		session, err := getSession(sessionID)
+		if err == nil {
+			session.Conn = conn
+			log.Printf("Re-attaching WebSocket connection for session ID: %s", sessionID)
+			log.Printf("Attempting to send the response lines: %v", session.ResponseLines)
+			for _, message := range session.ResponseLines {
+				err := conn.WriteMessage(websocket.TextMessage, []byte(message))
+				if err != nil {
+					log.Printf("Error sending stored message: %v", err)
+				}
 			}
+			keepConnectionAlive(session)
+			return
 		}
-		sessionsMu.Unlock()
-		keepConnectionAlive(session)
-		return
 	}
-	sessionsMu.Unlock()
 
-	// Generate a new session ID if not provided
 	if sessionID == "" {
 		sessionID = uuid.New().String()
 	}
@@ -132,13 +157,16 @@ func RunPackage(w http.ResponseWriter, r *http.Request) {
 	defer cancelFunc()
 
 	// Store the session
-	sessionsMu.Lock()
-	sessions[sessionID] = &Session{
+	session := &Session{
 		Conn:          conn,
 		ResponseLines: []string{},
 		CancelFunc:    cancelFunc,
 	}
-	sessionsMu.Unlock()
+
+	err = storeSession(sessionID, session)
+	if err != nil {
+		log.Printf("Error storing session: %v", err)
+	}
 
 	// Stream response lines
 	for line := range responseLines {
@@ -201,9 +229,8 @@ func RunPackage(w http.ResponseWriter, r *http.Request) {
 
 		// Send the message and store it in the session
 		conn.WriteMessage(websocket.TextMessage, outputJSON)
-		sessionsMu.Lock()
-		sessions[sessionID].ResponseLines = append(sessions[sessionID].ResponseLines, string(outputJSON))
-		sessionsMu.Unlock()
+		session.ResponseLines = append(session.ResponseLines, string(outputJSON))
+		storeSession(sessionID, session)
 	}
 }
 
