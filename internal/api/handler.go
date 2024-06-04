@@ -124,7 +124,7 @@ func RunPackage(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		sessionsMu.Unlock()
-		go subscribeToUpdates(sessionID, conn)
+		subscribeToUpdates(sessionID, conn)
 		return
 	}
 	sessionsMu.Unlock()
