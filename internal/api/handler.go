@@ -12,6 +12,7 @@ import (
 	"github.com/kurtosis-tech/kurtosis/api/golang/engine/lib/kurtosis_context"
 	"log"
 	"net/http"
+	"sync"
 )
 
 var upgrader = websocket.Upgrader{
@@ -31,11 +32,20 @@ type ExecCommandRequest struct {
 	Command           []string `json:"command"`
 }
 
-type Session struct {
-	Conn          *websocket.Conn
+type RedisSession struct {
 	ResponseLines []string
-	CancelFunc    context.CancelFunc
 }
+
+type Session struct {
+	Conn *websocket.Conn
+	RedisSession
+	CancelFunc context.CancelFunc
+}
+
+var (
+	sessionsMu sync.Mutex
+	sessions   = make(map[string]*Session)
+)
 
 var ctx = context.Background()
 var redisClient *redis.Client
@@ -48,7 +58,7 @@ func init() {
 	})
 }
 
-func storeSession(sessionID string, session *Session) error {
+func storeSession(sessionID string, session *RedisSession) error {
 	sessionData, err := json.Marshal(session)
 	if err != nil {
 		return err
@@ -57,12 +67,12 @@ func storeSession(sessionID string, session *Session) error {
 	return err
 }
 
-func getSession(sessionID string) (*Session, error) {
+func getSession(sessionID string) (*RedisSession, error) {
 	sessionData, err := redisClient.Get(ctx, sessionID).Result()
 	if err != nil {
 		return nil, err
 	}
-	var session Session
+	var session RedisSession
 	err = json.Unmarshal([]byte(sessionData), &session)
 	if err != nil {
 		return nil, err
@@ -75,12 +85,10 @@ func HandleRoot(w http.ResponseWriter, r *http.Request) {
 }
 
 func RunPackage(w http.ResponseWriter, r *http.Request) {
-	// Extract enclaveName and sessionID from query parameters
 	enclaveName := r.URL.Query().Get("enclaveName")
 	sessionID := r.URL.Query().Get("sessionID")
 
-	log.Println("Run Package called")
-	// Upgrade HTTP connection to WebSocket
+	log.Printf("Run Package called: %s", sessionID)
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("Failed to upgrade to WebSocket: %v", err)
@@ -88,9 +96,10 @@ func RunPackage(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
+	sessionsMu.Lock()
 	if sessionID != "" {
-		session, err := getSession(sessionID)
-		if err == nil {
+		session, exists := sessions[sessionID]
+		if exists {
 			session.Conn = conn
 			log.Printf("Re-attaching WebSocket connection for session ID: %s", sessionID)
 			log.Printf("Attempting to send the response lines: %v", session.ResponseLines)
@@ -100,16 +109,37 @@ func RunPackage(w http.ResponseWriter, r *http.Request) {
 					log.Printf("Error sending stored message: %v", err)
 				}
 			}
-			keepConnectionAlive(session)
+			sessionsMu.Unlock()
+			keepConnectionAlive(session, sessionID)
+			return
+		}
+
+		redisSession, err := getSession(sessionID)
+		if err == nil {
+			session = &Session{
+				Conn:         conn,
+				RedisSession: *redisSession,
+				CancelFunc:   nil, // Will be set after running the package
+			}
+			sessions[sessionID] = session
+			log.Printf("Loaded session from Redis for session ID: %s", sessionID)
+			for _, message := range session.ResponseLines {
+				err := conn.WriteMessage(websocket.TextMessage, []byte(message))
+				if err != nil {
+					log.Printf("Error sending stored message: %v", err)
+				}
+			}
+			sessionsMu.Unlock()
+			keepConnectionAlive(session, sessionID)
 			return
 		}
 	}
+	sessionsMu.Unlock()
 
 	if sessionID == "" {
 		sessionID = uuid.New().String()
 	}
 
-	// Read the initial message containing the package URL and parameters
 	_, message, err := conn.ReadMessage()
 	if err != nil {
 		log.Printf("Error reading message: %v", err)
@@ -123,32 +153,27 @@ func RunPackage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Serialize the Params to JSON
 	paramsJSON, err := json.Marshal(runPackageMessage.Params)
 	if err != nil {
 		conn.WriteMessage(websocket.TextMessage, []byte("Failed to serialize parameters: "+err.Error()))
 		return
 	}
 
-	// Initialize the Kurtosis context
 	kurtosisCtx, err := kurtosis_context.NewKurtosisContextFromLocalEngine()
 	if err != nil {
 		conn.WriteMessage(websocket.TextMessage, []byte("Failed to create Kurtosis context: "+err.Error()))
 		return
 	}
 
-	// Create an enclave
 	enclaveCtx, err := kurtosisCtx.CreateEnclave(context.Background(), enclaveName)
 	if err != nil {
 		conn.WriteMessage(websocket.TextMessage, []byte("Failed to create enclave: "+err.Error()))
 		return
 	}
 
-	// Define the StarlarkRunConfig with parameters
 	starlarkRunOptions := starlark_run_config.WithSerializedParams(string(paramsJSON))
 	starlarkRunConfig := starlark_run_config.NewRunStarlarkConfig(starlarkRunOptions)
 
-	// Run the Starlark package
 	responseLines, cancelFunc, err := enclaveCtx.RunStarlarkRemotePackage(r.Context(), runPackageMessage.PackageURL, starlarkRunConfig)
 	if err != nil {
 		conn.WriteMessage(websocket.TextMessage, []byte("Failed to run Starlark package: "+err.Error()))
@@ -156,19 +181,23 @@ func RunPackage(w http.ResponseWriter, r *http.Request) {
 	}
 	defer cancelFunc()
 
-	// Store the session
 	session := &Session{
-		Conn:          conn,
-		ResponseLines: []string{},
-		CancelFunc:    cancelFunc,
+		Conn: conn,
+		RedisSession: RedisSession{
+			ResponseLines: []string{},
+		},
+		CancelFunc: cancelFunc,
 	}
 
-	err = storeSession(sessionID, session)
+	sessionsMu.Lock()
+	sessions[sessionID] = session
+	sessionsMu.Unlock()
+
+	err = storeSession(sessionID, &session.RedisSession)
 	if err != nil {
 		log.Printf("Error storing session: %v", err)
 	}
 
-	// Stream response lines
 	for line := range responseLines {
 		if line == nil {
 			continue
@@ -177,7 +206,6 @@ func RunPackage(w http.ResponseWriter, r *http.Request) {
 		var outputJSON []byte
 		switch detail := line.RunResponseLine.(type) {
 		case *kurtosis_core_rpc_api_bindings.StarlarkRunResponseLine_ProgressInfo:
-			// Handle ProgressInfo
 			progress := detail.ProgressInfo
 			if len(progress.CurrentStepInfo) > 0 {
 				output := map[string]interface{}{
@@ -188,22 +216,18 @@ func RunPackage(w http.ResponseWriter, r *http.Request) {
 				outputJSON, err = json.Marshal(output)
 			}
 		case *kurtosis_core_rpc_api_bindings.StarlarkRunResponseLine_InstructionResult:
-			// Handle InstructionResult
 			result := detail.InstructionResult
 			output := map[string]interface{}{
 				"info": result.SerializedInstructionResult,
 			}
 			outputJSON, err = json.Marshal(output)
 		case *kurtosis_core_rpc_api_bindings.StarlarkRunResponseLine_Error:
-			// Handle Error
 			log.Printf("Error during Starlark execution: %v", detail.Error)
 			outputJSON = []byte("Error: " + detail.Error.String())
 		case *kurtosis_core_rpc_api_bindings.StarlarkRunResponseLine_Warning:
-			// Handle Warning
 			log.Printf("Warning: %s", detail.Warning.WarningMessage)
 			continue
 		case *kurtosis_core_rpc_api_bindings.StarlarkRunResponseLine_RunFinishedEvent:
-			// Handle RunFinishedEvent
 			if detail.RunFinishedEvent.IsRunSuccessful {
 				output := map[string]interface{}{
 					"info": "Network run successfully",
@@ -217,7 +241,6 @@ func RunPackage(w http.ResponseWriter, r *http.Request) {
 		case *kurtosis_core_rpc_api_bindings.StarlarkRunResponseLine_Instruction:
 			continue
 		default:
-			// Handle unexpected type
 			log.Printf("Received unexpected type in response line: %T", detail)
 			continue
 		}
@@ -227,11 +250,32 @@ func RunPackage(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		// Send the message and store it in the session
 		conn.WriteMessage(websocket.TextMessage, outputJSON)
 		session.ResponseLines = append(session.ResponseLines, string(outputJSON))
-		storeSession(sessionID, session)
+
+		sessionsMu.Lock()
+		sessions[sessionID] = session
+		sessionsMu.Unlock()
+
+		err = storeSession(sessionID, &session.RedisSession)
+		if err != nil {
+			log.Printf("Error storing session: %v", err)
+		}
 	}
+}
+
+func keepConnectionAlive(session *Session, sessionID string) {
+	for {
+		_, _, err := session.Conn.ReadMessage()
+		if err != nil {
+			log.Printf("Connection lost: %v", err)
+			break
+		}
+	}
+	session.CancelFunc()
+	sessionsMu.Lock()
+	delete(sessions, sessionID)
+	sessionsMu.Unlock()
 }
 
 func StopPackage(w http.ResponseWriter, r *http.Request) {
@@ -381,15 +425,4 @@ func ExecServiceCommand(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(responseJSON)
-}
-
-func keepConnectionAlive(session *Session) {
-	for {
-		_, message, err := session.Conn.ReadMessage()
-		if err != nil {
-			log.Printf("Error reading message: %v", err)
-			break
-		}
-		log.Printf("Received message from client: %s", string(message))
-	}
 }
