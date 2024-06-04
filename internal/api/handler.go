@@ -252,8 +252,6 @@ func RunPackage(w http.ResponseWriter, r *http.Request) {
 		// Publish the new response line to the Redis channel
 		redisClient.Publish(ctx, sessionID, string(outputJSON))
 	}
-
-	go subscribeToUpdates(sessionID, conn)
 }
 
 func subscribeToUpdates(sessionID string, conn *websocket.Conn) {
@@ -264,8 +262,13 @@ func subscribeToUpdates(sessionID string, conn *websocket.Conn) {
 		msg, err := pubsub.ReceiveMessage(ctx)
 		if err != nil {
 			log.Printf("Error receiving message: %v", err)
+			if err == redis.Nil {
+				continue
+			}
 			return
 		}
+
+		log.Printf("Received message from the pubsub: %v", msg)
 		err = conn.WriteMessage(websocket.TextMessage, []byte(msg.Payload))
 		if err != nil {
 			log.Printf("Error sending message: %v", err)
