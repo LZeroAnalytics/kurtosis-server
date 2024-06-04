@@ -39,8 +39,7 @@ type RedisSession struct {
 }
 
 type Session struct {
-	Conn *websocket.Conn
-	RedisSession
+	Conn       *websocket.Conn
 	CancelFunc context.CancelFunc
 }
 
@@ -105,30 +104,28 @@ func RunPackage(w http.ResponseWriter, r *http.Request) {
 	defer conn.Close()
 
 	sessionsMu.Lock()
-	if sessionID != "" {
-		session, exists := sessions[sessionID]
-		if exists {
-			session.Conn = conn
-			log.Printf("Re-attaching WebSocket connection for session ID: %s", sessionID)
+	session, exists := sessions[sessionID]
+	if exists {
+		session.Conn = conn
+		log.Printf("Re-attaching WebSocket connection for session ID: %s", sessionID)
 
-			redisSession, err := getSession(sessionID)
-			if err != nil {
-				log.Printf("Error retrieving session from Redis: %v", err)
-				sessionsMu.Unlock()
-				return
-			}
-
-			log.Printf("Attempting to send the response lines: %v", redisSession.ResponseLines)
-			for _, message := range redisSession.ResponseLines {
-				err := conn.WriteMessage(websocket.TextMessage, []byte(message))
-				if err != nil {
-					log.Printf("Error sending stored message: %v", err)
-				}
-			}
+		redisSession, err := getSession(sessionID)
+		if err != nil {
+			log.Printf("Error retrieving session from Redis: %v", err)
 			sessionsMu.Unlock()
-			keepConnectionAlive(session, sessionID)
 			return
 		}
+
+		log.Printf("Attempting to send the response lines: %v", redisSession.ResponseLines)
+		for _, message := range redisSession.ResponseLines {
+			err := conn.WriteMessage(websocket.TextMessage, []byte(message))
+			if err != nil {
+				log.Printf("Error sending stored message: %v", err)
+			}
+		}
+		sessionsMu.Unlock()
+		go subscribeToUpdates(sessionID, conn)
+		return
 	}
 	sessionsMu.Unlock()
 
@@ -177,19 +174,17 @@ func RunPackage(w http.ResponseWriter, r *http.Request) {
 	}
 	defer cancelFunc()
 
-	session := &Session{
-		Conn: conn,
-		RedisSession: RedisSession{
-			ResponseLines: []string{},
-		},
+	sessionsMu.Lock()
+	sessions[sessionID] = &Session{
+		Conn:       conn,
 		CancelFunc: cancelFunc,
 	}
-
-	sessionsMu.Lock()
-	sessions[sessionID] = session
 	sessionsMu.Unlock()
 
-	err = storeSession(sessionID, &session.RedisSession)
+	newRedisSession := &RedisSession{
+		ResponseLines: []string{},
+	}
+	err = storeSession(sessionID, newRedisSession)
 	if err != nil {
 		log.Printf("Error storing session: %v", err)
 	}
@@ -247,31 +242,36 @@ func RunPackage(w http.ResponseWriter, r *http.Request) {
 		}
 
 		conn.WriteMessage(websocket.TextMessage, outputJSON)
-		session.ResponseLines = append(session.ResponseLines, string(outputJSON))
+		newRedisSession.ResponseLines = append(newRedisSession.ResponseLines, string(outputJSON))
 
-		sessionsMu.Lock()
-		sessions[sessionID] = session
-		sessionsMu.Unlock()
-
-		err = storeSession(sessionID, &session.RedisSession)
+		err = storeSession(sessionID, newRedisSession)
 		if err != nil {
 			log.Printf("Error storing session: %v", err)
 		}
+
+		// Publish the new response line to the Redis channel
+		redisClient.Publish(ctx, sessionID, string(outputJSON))
 	}
+
+	go subscribeToUpdates(sessionID, conn)
 }
 
-func keepConnectionAlive(session *Session, sessionID string) {
+func subscribeToUpdates(sessionID string, conn *websocket.Conn) {
+	pubsub := redisClient.Subscribe(ctx, sessionID)
+	defer pubsub.Close()
+
 	for {
-		_, _, err := session.Conn.ReadMessage()
+		msg, err := pubsub.ReceiveMessage(ctx)
 		if err != nil {
-			log.Printf("Connection lost: %v", err)
-			break
+			log.Printf("Error receiving message: %v", err)
+			return
+		}
+		err = conn.WriteMessage(websocket.TextMessage, []byte(msg.Payload))
+		if err != nil {
+			log.Printf("Error sending message: %v", err)
+			return
 		}
 	}
-	session.CancelFunc()
-	sessionsMu.Lock()
-	delete(sessions, sessionID)
-	sessionsMu.Unlock()
 }
 
 func StopPackage(w http.ResponseWriter, r *http.Request) {
