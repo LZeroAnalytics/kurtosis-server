@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"github.com/go-redis/redis/v8"
@@ -13,6 +14,7 @@ import (
 	"log"
 	"net/http"
 	"sync"
+	"time"
 )
 
 var upgrader = websocket.Upgrader{
@@ -52,9 +54,15 @@ var redisClient *redis.Client
 
 func init() {
 	redisClient = redis.NewClient(&redis.Options{
-		Addr:     "lzero-api-redis-g0loij.serverless.euw1.cache.amazonaws.com:6379", // Replace with your Redis endpoint
-		Password: "",                                                                // No password set
-		DB:       0,                                                                 // Use default DB
+		Addr:         "lzero-api-redis-g0loij.serverless.euw1.cache.amazonaws.com:6379", // Replace with your Redis endpoint
+		Password:     "",                                                                // No password set
+		DB:           0,                                                                 // Use default DB
+		DialTimeout:  10 * time.Second,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		TLSConfig: &tls.Config{
+			InsecureSkipVerify: true, // Skip certificate verification if needed
+		},
 	})
 }
 
