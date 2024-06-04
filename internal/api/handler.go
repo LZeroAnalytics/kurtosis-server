@@ -101,7 +101,6 @@ func RunPackage(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Failed to upgrade to WebSocket: %v", err)
 		return
 	}
-	defer conn.Close()
 
 	sessionsMu.Lock()
 	session, exists := sessions[sessionID]
@@ -172,7 +171,6 @@ func RunPackage(w http.ResponseWriter, r *http.Request) {
 		conn.WriteMessage(websocket.TextMessage, []byte("Failed to run Starlark package: "+err.Error()))
 		return
 	}
-	defer cancelFunc()
 
 	sessionsMu.Lock()
 	sessions[sessionID] = &Session{
