@@ -102,28 +102,16 @@ func RunPackage(w http.ResponseWriter, r *http.Request) {
 		if exists {
 			session.Conn = conn
 			log.Printf("Re-attaching WebSocket connection for session ID: %s", sessionID)
-			log.Printf("Attempting to send the response lines: %v", session.ResponseLines)
-			for _, message := range session.ResponseLines {
-				err := conn.WriteMessage(websocket.TextMessage, []byte(message))
-				if err != nil {
-					log.Printf("Error sending stored message: %v", err)
-				}
-			}
-			sessionsMu.Unlock()
-			keepConnectionAlive(session, sessionID)
-			return
-		}
 
-		redisSession, err := getSession(sessionID)
-		if err == nil {
-			session = &Session{
-				Conn:         conn,
-				RedisSession: *redisSession,
-				CancelFunc:   nil, // Will be set after running the package
+			redisSession, err := getSession(sessionID)
+			if err != nil {
+				log.Printf("Error retrieving session from Redis: %v", err)
+				sessionsMu.Unlock()
+				return
 			}
-			sessions[sessionID] = session
-			log.Printf("Loaded session from Redis for session ID: %s", sessionID)
-			for _, message := range session.ResponseLines {
+
+			log.Printf("Attempting to send the response lines: %v", redisSession.ResponseLines)
+			for _, message := range redisSession.ResponseLines {
 				err := conn.WriteMessage(websocket.TextMessage, []byte(message))
 				if err != nil {
 					log.Printf("Error sending stored message: %v", err)
