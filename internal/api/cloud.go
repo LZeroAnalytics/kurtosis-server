@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/kurtosis-tech/kurtosis/api/golang/engine/lib/kurtosis_context"
 	"io/ioutil"
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/scheme"
 	"net/http"
@@ -75,13 +76,30 @@ func createIngress(data IngressData) error {
 		return err
 	}
 
-	_, err = dynClient.Resource(schema.GroupVersionResource{
+	resource := schema.GroupVersionResource{
 		Group:    "networking.k8s.io",
 		Version:  "v1",
 		Resource: "ingresses",
-	}).Namespace(data.Namespace).Create(context.Background(), ingress, metav1.CreateOptions{})
+	}
 
-	return err
+	namespace := data.Namespace
+	name := ingress.GetName()
+
+	// Check if the ingress already exists
+	_, err = dynClient.Resource(resource).Namespace(namespace).Get(context.Background(), name, metav1.GetOptions{})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			// Ingress does not exist, create it
+			_, err = dynClient.Resource(resource).Namespace(namespace).Create(context.Background(), ingress, metav1.CreateOptions{})
+			if err != nil {
+				return err
+			}
+		} else {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func GetServiceURLs(w http.ResponseWriter, r *http.Request) {
@@ -163,4 +181,38 @@ func createServiceURLs(data IngressData) []string {
 		urls = append(urls, url)
 	}
 	return urls
+}
+
+func deleteIngresses(namespace string) error {
+	config, err := clientcmd.BuildConfigFromFlags("", "/home/ubuntu/.kube/config")
+	if err != nil {
+		return err
+	}
+
+	dynClient, err := dynamic.NewForConfig(config)
+	if err != nil {
+		return err
+	}
+
+	resource := schema.GroupVersionResource{
+		Group:    "networking.k8s.io",
+		Version:  "v1",
+		Resource: "ingresses",
+	}
+
+	// List all ingresses in the namespace
+	ingressList, err := dynClient.Resource(resource).Namespace(namespace).List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		return err
+	}
+
+	// Delete each ingress
+	for _, ingress := range ingressList.Items {
+		err := dynClient.Resource(resource).Namespace(namespace).Delete(context.Background(), ingress.GetName(), metav1.DeleteOptions{})
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

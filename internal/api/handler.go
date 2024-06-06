@@ -283,6 +283,12 @@ func StopPackage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	err := deleteIngresses("kt-" + enclaveIdentifier)
+	if err != nil {
+		http.Error(w, "Failed to delete ingresses: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	// Initialize the Kurtosis context
 	kurtosisCtx, err := kurtosis_context.NewKurtosisContextFromLocalEngine()
 	if err != nil {
