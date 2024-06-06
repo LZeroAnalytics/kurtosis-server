@@ -229,19 +229,21 @@ func RunPackage(w http.ResponseWriter, r *http.Request) {
 			}
 		case *kurtosis_core_rpc_api_bindings.StarlarkRunResponseLine_Info:
 			info := detail.Info.GetInfoMessage()
-			fmt.Println(info)
+			log.Println(info)
 			outputJSON, err = json.Marshal(map[string]interface{}{
 				"info": info,
 			})
 			// Extract service name from info message
 			re := regexp.MustCompile(`Service '(.+?)' added with service UUID`)
 			matches := re.FindStringSubmatch(info)
+			log.Printf("Matches: %v", matches)
 			if len(matches) > 1 {
 				serviceName := matches[1]
 				serviceNames[serviceName] = struct{}{}
 
 				// Retrieve ports for the service
 				serviceCtx, err := enclaveCtx.GetServiceContext(serviceName)
+				log.Printf("Service context: %v", serviceCtx)
 				if err != nil {
 					log.Printf("Failed to get service context for %s: %v", serviceName, err)
 					continue
