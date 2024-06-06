@@ -1,0 +1,23 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .ServiceName }}-ingress
+  namespace: {{ .Namespace }}
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    external-dns.alpha.kubernetes.io/hostname: "{{ .ServiceName }}.{{ .Domain }}"
+spec:
+  rules:
+  {{- range .Ports }}
+    - host: {{ $.ServiceName }}.{{ $.Domain }}
+      http:
+        paths:
+        - path: /{{ .PortName }}
+          pathType: Prefix
+          backend:
+            service:
+              name: {{ $.ServiceName }}
+              port:
+                number: {{ .Port }}
+  {{- end }}
