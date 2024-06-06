@@ -229,12 +229,12 @@ func RunPackage(w http.ResponseWriter, r *http.Request) {
 			}
 		case *kurtosis_core_rpc_api_bindings.StarlarkRunResponseLine_Info:
 			info := detail.Info.GetInfoMessage()
-			log.Println(info)
+			log.Printf("Info message: %v", info)
 			outputJSON, err = json.Marshal(map[string]interface{}{
 				"info": info,
 			})
 			// Extract service name from info message
-			re := regexp.MustCompile(`Service '(.+?)' added with service UUID`)
+			re := regexp.MustCompile(`Service '(.+?)' added with service.*`)
 			matches := re.FindStringSubmatch(info)
 			log.Printf("Matches: %v", matches)
 			if len(matches) > 1 {
