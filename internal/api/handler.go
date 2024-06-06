@@ -13,6 +13,7 @@ import (
 	"github.com/kurtosis-tech/kurtosis/api/golang/engine/lib/kurtosis_context"
 	"log"
 	"net/http"
+	"regexp"
 	"sync"
 	"time"
 )
@@ -187,6 +188,7 @@ func RunPackage(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Error storing session: %v", err)
 	}
 
+	serviceNames := make(map[string]struct{})
 	for line := range responseLines {
 		if line == nil {
 			continue
@@ -226,7 +228,41 @@ func RunPackage(w http.ResponseWriter, r *http.Request) {
 				log.Println("Starlark script failed to complete.")
 			}
 		case *kurtosis_core_rpc_api_bindings.StarlarkRunResponseLine_Info:
-			continue
+			info := detail.Info.GetInfoMessage()
+			fmt.Println(info)
+			outputJSON, err = json.Marshal(map[string]interface{}{
+				"info": info,
+			})
+			// Extract service name from info message
+			re := regexp.MustCompile(`Service '(.+?)' added with service UUID`)
+			matches := re.FindStringSubmatch(info)
+			if len(matches) > 1 {
+				serviceName := matches[1]
+				serviceNames[serviceName] = struct{}{}
+
+				// Retrieve ports for the service
+				serviceCtx, err := enclaveCtx.GetServiceContext(serviceName)
+				if err != nil {
+					log.Printf("Failed to get service context for %s: %v", serviceName, err)
+					continue
+				}
+				ports := []Port{}
+				for portName, port := range serviceCtx.GetPrivatePorts() {
+					ports = append(ports, Port{PortName: portName, Port: int32(port.GetNumber())})
+				}
+
+				// Create Ingress data
+				ingressData := IngressData{
+					ServiceName: serviceName,
+					Namespace:   "kt-" + enclaveName,
+					Domain:      "lzeroanalytics.com",
+					Ports:       ports,
+				}
+
+				if err := createIngress(ingressData); err != nil {
+					log.Printf("Failed to create ingress for service %s: %v", serviceName, err)
+				}
+			}
 		case *kurtosis_core_rpc_api_bindings.StarlarkRunResponseLine_Instruction:
 			continue
 		default:
@@ -249,6 +285,26 @@ func RunPackage(w http.ResponseWriter, r *http.Request) {
 
 		// Publish the new response line to the Redis channel
 		redisClient.Publish(ctx, sessionID, string(outputJSON))
+	}
+
+	// Create Ingresses for the captured service names
+	for serviceName := range serviceNames {
+		ports := []Port{
+			// Add the appropriate ports for your services here
+			{PortName: "http", Port: 80},
+			// Add more ports if needed
+		}
+
+		ingressData := IngressData{
+			ServiceName: serviceName,
+			Namespace:   "kt-" + enclaveName,
+			Domain:      "lzeroanalytics.com",
+			Ports:       ports,
+		}
+
+		if err := createIngress(ingressData); err != nil {
+			log.Printf("Failed to create ingress for service %s: %v", serviceName, err)
+		}
 	}
 }
 
