@@ -124,7 +124,7 @@ func RunPackage(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		sessionsMu.Unlock()
-		subscribeToUpdates(sessionID, conn)
+		subscribeToUpdates(sessionID, conn, enclaveName)
 		return
 	}
 	sessionsMu.Unlock()
@@ -229,42 +229,9 @@ func RunPackage(w http.ResponseWriter, r *http.Request) {
 			}
 		case *kurtosis_core_rpc_api_bindings.StarlarkRunResponseLine_Info:
 			info := detail.Info.GetInfoMessage()
-			log.Printf("Info message: %v", info)
 			outputJSON, err = json.Marshal(map[string]interface{}{
 				"info": info,
 			})
-			// Extract service name from info message
-			re := regexp.MustCompile(`Service '(.+?)' added with service.*`)
-			matches := re.FindStringSubmatch(info)
-			log.Printf("Matches: %v", matches)
-			if len(matches) > 1 {
-				serviceName := matches[1]
-				serviceNames[serviceName] = struct{}{}
-
-				// Retrieve ports for the service
-				serviceCtx, err := enclaveCtx.GetServiceContext(serviceName)
-				log.Printf("Service context: %v", serviceCtx)
-				if err != nil {
-					log.Printf("Failed to get service context for %s: %v", serviceName, err)
-					continue
-				}
-				ports := []Port{}
-				for portName, port := range serviceCtx.GetPrivatePorts() {
-					ports = append(ports, Port{PortName: portName, Port: int32(port.GetNumber())})
-				}
-
-				// Create Ingress data
-				ingressData := IngressData{
-					ServiceName: serviceName,
-					Namespace:   "kt-" + enclaveName,
-					Domain:      "lzeroanalytics.com",
-					Ports:       ports,
-				}
-
-				if err := createIngress(ingressData); err != nil {
-					log.Printf("Failed to create ingress for service %s: %v", serviceName, err)
-				}
-			}
 		case *kurtosis_core_rpc_api_bindings.StarlarkRunResponseLine_Instruction:
 			continue
 		default:
@@ -310,7 +277,19 @@ func RunPackage(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func subscribeToUpdates(sessionID string, conn *websocket.Conn) {
+func subscribeToUpdates(sessionID string, conn *websocket.Conn, enclaveName string) {
+
+	kurtosisCtx, err := kurtosis_context.NewKurtosisContextFromLocalEngine()
+	if err != nil {
+		return
+	}
+
+	// Get the EnclaveContext
+	enclaveCtx, err := kurtosisCtx.GetEnclaveContext(context.Background(), enclaveName)
+	if err != nil {
+		return
+	}
+
 	pubsub := redisClient.Subscribe(ctx, sessionID)
 	defer pubsub.Close()
 
@@ -330,6 +309,51 @@ func subscribeToUpdates(sessionID string, conn *websocket.Conn) {
 			log.Printf("Error sending message: %v", err)
 			return
 		}
+
+		// Process the message for service addition
+		var payload map[string]interface{}
+		if err := json.Unmarshal([]byte(msg.Payload), &payload); err != nil {
+			log.Printf("Failed to unmarshal payload: %v", err)
+			continue
+		}
+
+		info, ok := payload["info"].(string)
+		log.Printf("Info: %s is ok: %v", info, ok)
+		if !ok {
+			continue
+		}
+
+		// Extract service name from info message
+		re := regexp.MustCompile(`Service '(.+?)' added with service.*`)
+		matches := re.FindStringSubmatch(info)
+		log.Printf("Matches: %v", matches)
+		if len(matches) > 1 {
+			serviceName := matches[1]
+
+			// Retrieve ports for the service
+			serviceCtx, err := enclaveCtx.GetServiceContext(serviceName)
+			if err != nil {
+				log.Printf("Failed to get service context for %s: %v", serviceName, err)
+				continue
+			}
+			ports := []Port{}
+			for portName, port := range serviceCtx.GetPrivatePorts() {
+				ports = append(ports, Port{PortName: portName, Port: int32(port.GetNumber())})
+			}
+
+			// Create Ingress data
+			ingressData := IngressData{
+				ServiceName: serviceName,
+				Namespace:   "kt-" + enclaveName,
+				Domain:      "lzeroanalytics.com",
+				Ports:       ports,
+			}
+
+			if err := createIngress(ingressData); err != nil {
+				log.Printf("Failed to create ingress for service %s: %v", serviceName, err)
+			}
+		}
+
 	}
 }
 
