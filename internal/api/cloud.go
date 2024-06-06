@@ -10,7 +10,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/scheme"
 	"net/http"
-	"path/filepath"
 	"text/template"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -58,7 +57,7 @@ func createIngress(data IngressData) error {
 	}
 
 	// Load the ingress template
-	templatePath := filepath.Join("templates", "ingress.tmpl")
+	templatePath := "/home/ubuntu/kurtosis-server/internal/api/templates/ingress.tmpl"
 	tmpl, err := loadTemplate(templatePath)
 	if err != nil {
 		return err
