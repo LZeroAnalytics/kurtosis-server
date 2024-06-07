@@ -124,7 +124,7 @@ func RunPackage(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		sessionsMu.Unlock()
-		subscribeToUpdates(sessionID, conn, enclaveName)
+		subscribeToUpdates(sessionID, conn)
 		return
 	}
 	sessionsMu.Unlock()
@@ -253,46 +253,11 @@ func RunPackage(w http.ResponseWriter, r *http.Request) {
 
 		// Publish the new response line to the Redis channel
 		redisClient.Publish(ctx, sessionID, string(outputJSON))
-	}
-}
 
-func subscribeToUpdates(sessionID string, conn *websocket.Conn, enclaveName string) {
-
-	kurtosisCtx, err := kurtosis_context.NewKurtosisContextFromLocalEngine()
-	if err != nil {
-		return
-	}
-
-	// Get the EnclaveContext
-	enclaveCtx, err := kurtosisCtx.GetEnclaveContext(context.Background(), enclaveName)
-	if err != nil {
-		return
-	}
-
-	pubsub := redisClient.Subscribe(ctx, sessionID)
-	defer pubsub.Close()
-
-	for {
-		msg, err := pubsub.ReceiveMessage(ctx)
-		if err != nil {
-			log.Printf("Error receiving message: %v", err)
-			if err == redis.Nil {
-				continue
-			}
-			return
-		}
-
-		log.Printf("Received message from the pubsub: %v", msg)
-		err = conn.WriteMessage(websocket.TextMessage, []byte(msg.Payload))
-		if err != nil {
-			log.Printf("Error sending message: %v", err)
-			return
-		}
-
-		// Process the message for service addition
+		// Add LoadBalancer creation logic here
 		var payload map[string]interface{}
-		if err := json.Unmarshal([]byte(msg.Payload), &payload); err != nil {
-			log.Printf("Failed to unmarshal payload: %v", err)
+		if err := json.Unmarshal(outputJSON, &payload); err != nil {
+			log.Printf("Failed to unmarshal outputJSON: %v", err)
 			continue
 		}
 
@@ -320,7 +285,7 @@ func subscribeToUpdates(sessionID string, conn *websocket.Conn, enclaveName stri
 				ports = append(ports, Port{PortName: portName, Port: int32(port.GetNumber())})
 			}
 
-			// Create Ingress data
+			// Create Service data
 			serviceData := ServiceData{
 				ServiceName: serviceName,
 				Namespace:   "kt-" + enclaveName,
@@ -331,6 +296,30 @@ func subscribeToUpdates(sessionID string, conn *websocket.Conn, enclaveName stri
 			if err := createService(serviceData); err != nil {
 				log.Printf("Failed to create load balancer for service %s: %v", serviceName, err)
 			}
+		}
+	}
+}
+
+func subscribeToUpdates(sessionID string, conn *websocket.Conn) {
+
+	pubsub := redisClient.Subscribe(ctx, sessionID)
+	defer pubsub.Close()
+
+	for {
+		msg, err := pubsub.ReceiveMessage(ctx)
+		if err != nil {
+			log.Printf("Error receiving message: %v", err)
+			if err == redis.Nil {
+				continue
+			}
+			return
+		}
+
+		log.Printf("Received message from the pubsub: %v", msg)
+		err = conn.WriteMessage(websocket.TextMessage, []byte(msg.Payload))
+		if err != nil {
+			log.Printf("Error sending message: %v", err)
+			return
 		}
 	}
 }
