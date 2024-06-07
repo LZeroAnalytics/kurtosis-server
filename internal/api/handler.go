@@ -188,7 +188,6 @@ func RunPackage(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Error storing session: %v", err)
 	}
 
-	serviceNames := make(map[string]struct{})
 	for line := range responseLines {
 		if line == nil {
 			continue
@@ -254,26 +253,6 @@ func RunPackage(w http.ResponseWriter, r *http.Request) {
 
 		// Publish the new response line to the Redis channel
 		redisClient.Publish(ctx, sessionID, string(outputJSON))
-	}
-
-	// Create Ingresses for the captured service names
-	for serviceName := range serviceNames {
-		ports := []Port{
-			// Add the appropriate ports for your services here
-			{PortName: "http", Port: 80},
-			// Add more ports if needed
-		}
-
-		ingressData := IngressData{
-			ServiceName: serviceName,
-			Namespace:   "kt-" + enclaveName,
-			Domain:      "lzeroanalytics.com",
-			Ports:       ports,
-		}
-
-		if err := createIngress(ingressData); err != nil {
-			log.Printf("Failed to create ingress for service %s: %v", serviceName, err)
-		}
 	}
 }
 
@@ -342,18 +321,17 @@ func subscribeToUpdates(sessionID string, conn *websocket.Conn, enclaveName stri
 			}
 
 			// Create Ingress data
-			ingressData := IngressData{
+			serviceData := ServiceData{
 				ServiceName: serviceName,
 				Namespace:   "kt-" + enclaveName,
 				Domain:      "lzeroanalytics.com",
 				Ports:       ports,
 			}
 
-			if err := createIngress(ingressData); err != nil {
-				log.Printf("Failed to create ingress for service %s: %v", serviceName, err)
+			if err := createService(serviceData); err != nil {
+				log.Printf("Failed to create load balancer for service %s: %v", serviceName, err)
 			}
 		}
-
 	}
 }
 
@@ -365,7 +343,7 @@ func StopPackage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := deleteIngresses("kt-" + enclaveIdentifier)
+	err := deleteServices("kt-" + enclaveIdentifier)
 	if err != nil {
 		http.Error(w, "Failed to delete ingresses: "+err.Error(), http.StatusInternalServerError)
 		return

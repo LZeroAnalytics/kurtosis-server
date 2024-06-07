@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .ServiceName }}-lb
+  namespace: {{ .Namespace }}
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: "{{ .ServiceName }}.{{ .Domain }}"
+spec:
+  ports:
+  {{- range .Ports }}
+    - port: {{ .Port }}
+      targetPort: {{ .Port }}
+      protocol: TCP
+  {{- end }}
+  type: LoadBalancer
+  selector:
+    app: {{ .ServiceName }}

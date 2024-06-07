@@ -9,6 +9,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/scheme"
+	"strings"
 	"text/template"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -23,7 +24,7 @@ type Port struct {
 	Port     int32
 }
 
-type IngressData struct {
+type ServiceData struct {
 	ServiceName string
 	Namespace   string
 	Domain      string
@@ -36,7 +37,7 @@ func loadTemplate(templatePath string) (*template.Template, error) {
 		return nil, err
 	}
 
-	tmpl, err := template.New("ingress").Parse(string(content))
+	tmpl, err := template.New("service").Parse(string(content))
 	if err != nil {
 		return nil, err
 	}
@@ -44,9 +45,9 @@ func loadTemplate(templatePath string) (*template.Template, error) {
 	return tmpl, nil
 }
 
-func createIngress(data IngressData) error {
+func createService(data ServiceData) error {
 
-	fmt.Printf("Creating ingress with the following data: %v", data)
+	fmt.Printf("Creating serbice with the following data: %v", data)
 	config, err := clientcmd.BuildConfigFromFlags("", "/home/ubuntu/.kube/config")
 	if err != nil {
 		return err
@@ -57,8 +58,8 @@ func createIngress(data IngressData) error {
 		return err
 	}
 
-	// Load the ingress template
-	templatePath := "/home/ubuntu/kurtosis-server/internal/api/templates/ingress.tmpl"
+	// Load the service template
+	templatePath := "/home/ubuntu/kurtosis-server/internal/api/templates/service.tmpl"
 	tmpl, err := loadTemplate(templatePath)
 	if err != nil {
 		return err
@@ -70,39 +71,39 @@ func createIngress(data IngressData) error {
 	}
 
 	// Print the rendered template for debugging
-	fmt.Println("Rendered Ingress YAML:")
+	fmt.Println("Rendered service YAML:")
 	fmt.Println(buf.String())
 
 	// Convert the rendered template to an unstructured object
-	ingress := &unstructured.Unstructured{}
-	dec := runtime.DecodeInto(scheme.Codecs.UniversalDeserializer(), buf.Bytes(), ingress)
+	service := &unstructured.Unstructured{}
+	dec := runtime.DecodeInto(scheme.Codecs.UniversalDeserializer(), buf.Bytes(), service)
 	if dec != nil {
 		return err
 	}
 
-	fmt.Printf("Creating the following ingress: %v", ingress)
+	fmt.Printf("Creating the following service: %v", service)
 
 	resource := schema.GroupVersionResource{
-		Group:    "networking.k8s.io",
+		Group:    "",
 		Version:  "v1",
-		Resource: "ingresses",
+		Resource: "services",
 	}
 
 	namespace := data.Namespace
-	name := ingress.GetName()
+	name := service.GetName()
 
-	// Check if the ingress already exists
+	// Check if the service already exists
 	_, err = dynClient.Resource(resource).Namespace(namespace).Get(context.Background(), name, metav1.GetOptions{})
 	if err != nil {
 		if errors.IsNotFound(err) {
-			// Ingress does not exist, create it
-			_, err = dynClient.Resource(resource).Namespace(namespace).Create(context.Background(), ingress, metav1.CreateOptions{})
+			// Service does not exist, create it
+			_, err = dynClient.Resource(resource).Namespace(namespace).Create(context.Background(), service, metav1.CreateOptions{})
 			if err != nil {
-				fmt.Printf("Error creating ingress: %v:", err)
+				fmt.Printf("Error creating service: %v:", err)
 				return err
 			}
 		} else {
-			fmt.Printf("Ingress exists or other error: %v", err)
+			fmt.Printf("Service exists or other error: %v", err)
 			return err
 		}
 	}
@@ -110,7 +111,7 @@ func createIngress(data IngressData) error {
 	return nil
 }
 
-func createServiceURLs(data IngressData) []string {
+func createServiceURLs(data ServiceData) []string {
 	urls := []string{}
 	for _, port := range data.Ports {
 		url := fmt.Sprintf("http://%s.%s/%s", data.ServiceName, data.Domain, port.PortName)
@@ -119,7 +120,7 @@ func createServiceURLs(data IngressData) []string {
 	return urls
 }
 
-func deleteIngresses(namespace string) error {
+func deleteServices(namespace string) error {
 	config, err := clientcmd.BuildConfigFromFlags("", "/home/ubuntu/.kube/config")
 	if err != nil {
 		return err
@@ -131,22 +132,25 @@ func deleteIngresses(namespace string) error {
 	}
 
 	resource := schema.GroupVersionResource{
-		Group:    "networking.k8s.io",
+		Group:    "",
 		Version:  "v1",
-		Resource: "ingresses",
+		Resource: "services",
 	}
 
-	// List all ingresses in the namespace
-	ingressList, err := dynClient.Resource(resource).Namespace(namespace).List(context.Background(), metav1.ListOptions{})
+	// List all services in the namespace
+	servicesList, err := dynClient.Resource(resource).Namespace(namespace).List(context.Background(), metav1.ListOptions{})
 	if err != nil {
 		return err
 	}
 
-	// Delete each ingress
-	for _, ingress := range ingressList.Items {
-		err := dynClient.Resource(resource).Namespace(namespace).Delete(context.Background(), ingress.GetName(), metav1.DeleteOptions{})
-		if err != nil {
-			return err
+	// Delete each load balancer service
+	for _, service := range servicesList.Items {
+		if strings.HasSuffix(service.GetName(), "-lb") {
+			err := dynClient.Resource(resource).Namespace(namespace).Delete(context.Background(), service.GetName(), metav1.DeleteOptions{})
+			if err != nil {
+				return err
+			}
+			fmt.Printf("Deleted service: %s\n", service.GetName())
 		}
 	}
 
