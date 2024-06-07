@@ -402,12 +402,28 @@ func GetServicesInfo(w http.ResponseWriter, r *http.Request) {
 	// Construct the detailed information
 	servicesInfo := make(map[string]interface{})
 	for _, serviceContext := range serviceContexts {
+		privatePorts := make(map[string]Port)
+		for portName, portSpec := range serviceContext.GetPrivatePorts() {
+			privatePorts[portName] = Port{
+				Port:     int32(portSpec.GetNumber()),
+				PortName: portName,
+			}
+		}
+
+		publicPorts := make(map[string]Port)
+		for portName, portSpec := range serviceContext.GetPublicPorts() {
+			publicPorts[portName] = Port{
+				Port:     int32(portSpec.GetNumber()),
+				PortName: portName,
+			}
+		}
+
 		serviceInfo := map[string]interface{}{
 			"service_uuid":       serviceContext.GetServiceUUID(),
 			"private_ip_address": serviceContext.GetPrivateIPAddress(),
-			"private_ports":      serviceContext.GetPrivatePorts(),
+			"private_ports":      privatePorts,
 			"public_ip_address":  serviceContext.GetMaybePublicIPAddress(),
-			"public_ports":       serviceContext.GetPublicPorts(),
+			"public_ports":       publicPorts,
 		}
 		servicesInfo[string(serviceContext.GetServiceName())] = serviceInfo
 	}
