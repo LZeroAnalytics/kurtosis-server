@@ -310,7 +310,11 @@ func subscribeToUpdates(sessionID string, conn *websocket.Conn) {
 		if err != nil {
 			log.Printf("Error receiving message: %v", err)
 			errMsg := fmt.Sprintf("Error: %v", err)
-			conn.WriteMessage(websocket.TextMessage, []byte(errMsg))
+			writeErr := conn.WriteMessage(websocket.TextMessage, []byte(errMsg))
+			if writeErr != nil {
+				log.Printf("Error sending error message to WebSocket: %v", writeErr)
+				continue
+			}
 			continue
 		}
 
@@ -318,7 +322,11 @@ func subscribeToUpdates(sessionID string, conn *websocket.Conn) {
 		err = conn.WriteMessage(websocket.TextMessage, []byte(msg.Payload))
 		if err != nil {
 			log.Printf("Error sending message: %v", err)
-			return
+			errMsg := fmt.Sprintf("Error: %v", err)
+			writeErr := conn.WriteMessage(websocket.TextMessage, []byte(errMsg))
+			if writeErr != nil {
+				log.Printf("Error sending error message to WebSocket: %v", writeErr)
+			}
 		}
 	}
 }
