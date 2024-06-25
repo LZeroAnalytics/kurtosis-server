@@ -12,14 +12,10 @@ spec:
   ports:
   {{- range .Ports }}
     - name: {{ .PortName }}
-      port: {{ .Port }}
+      port: 443
       targetPort: {{ .Port }}
       protocol: TCP
   {{- end }}
-    - name: https
-      port: 443
-      targetPort: {{ .Ports | first | .Port }}
-      protocol: TCP
   type: LoadBalancer
   selector:
     kurtosistech.com/id: {{ .ServiceName }}

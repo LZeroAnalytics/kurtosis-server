@@ -47,7 +47,7 @@ func loadTemplate(templatePath string) (*template.Template, error) {
 
 func createService(data ServiceData) error {
 
-	fmt.Printf("Creating serbice with the following data: %v", data)
+	fmt.Printf("Creating service with the following data: %v", data)
 	config, err := clientcmd.BuildConfigFromFlags("", "/home/ubuntu/.kube/config")
 	if err != nil {
 		return err
