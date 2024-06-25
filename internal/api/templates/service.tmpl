@@ -5,6 +5,9 @@ metadata:
   namespace: {{ .Namespace }}
   annotations:
     external-dns.alpha.kubernetes.io/hostname: "{{ .ServiceName }}.{{ .Domain }}"
+    service.beta.kubernetes.io/aws-load-balancer-type: "external"
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
 spec:
   ports:
   {{- range .Ports }}
