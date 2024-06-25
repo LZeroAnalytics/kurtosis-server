@@ -54,9 +54,9 @@ var redisClient *redis.Client
 
 func init() {
 	redisClient = redis.NewClient(&redis.Options{
-		Addr:         "lzero-api-redis-g0loij.serverless.euw1.cache.amazonaws.com:6379", // Replace with your Redis endpoint
-		Password:     "",                                                                // No password set
-		DB:           0,                                                                 // Use default DB
+		Addr:         "lzero-api-redis-g0loij.serverless.euw1.cache.amazonaws.com:6379",
+		Password:     "",
+		DB:           0,
 		DialTimeout:  10 * time.Second,
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
@@ -309,10 +309,9 @@ func subscribeToUpdates(sessionID string, conn *websocket.Conn) {
 		msg, err := pubsub.ReceiveMessage(ctx)
 		if err != nil {
 			log.Printf("Error receiving message: %v", err)
-			if err == redis.Nil {
-				continue
-			}
-			return
+			errMsg := fmt.Sprintf("Error: %v", err)
+			conn.WriteMessage(websocket.TextMessage, []byte(errMsg))
+			continue
 		}
 
 		log.Printf("Received message from the pubsub: %v", msg)

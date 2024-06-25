@@ -5,6 +5,9 @@ metadata:
   namespace: {{ .Namespace }}
   annotations:
     external-dns.alpha.kubernetes.io/hostname: "{{ .ServiceName }}.{{ .Domain }}"
+    service.beta.kubernetes.io/aws-load-balancer-ssl-cert: "arn:aws:acm:eu-west-1:403716913948:certificate/1133e793-890f-4e5d-8ee4-4a1d21d2620f"
+    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "http"
+    service.beta.kubernetes.io/aws-load-balancer-ssl-ports: "https"
 spec:
   ports:
   {{- range .Ports }}
@@ -13,6 +16,10 @@ spec:
       targetPort: {{ .Port }}
       protocol: TCP
   {{- end }}
+    - name: https
+      port: 443
+      targetPort: {{ .Ports | first | .Port }}
+      protocol: TCP
   type: LoadBalancer
   selector:
     kurtosistech.com/id: {{ .ServiceName }}
