@@ -4,7 +4,7 @@ metadata:
   name: {{ .ServiceName }}-lb
   namespace: {{ .Namespace }}
   annotations:
-    external-dns.alpha.kubernetes.io/hostname: "{{ .ServiceName }}.{{ .Domain }}"
+    external-dns.alpha.kubernetes.io/hostname: "{{ .HostName }}.{{ .Domain }}"
     service.beta.kubernetes.io/aws-load-balancer-type: "external"
     service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
     service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip

@@ -287,7 +287,8 @@ func RunPackage(w http.ResponseWriter, r *http.Request) {
 
 			// Create Service data
 			serviceData := ServiceData{
-				ServiceName: sessionID + "-" + serviceName,
+				ServiceName: serviceName,
+				HostName:    sessionID + "-" + serviceName,
 				Namespace:   "kt-" + enclaveName,
 				Domain:      "lzeroanalytics.com",
 				Ports:       ports,

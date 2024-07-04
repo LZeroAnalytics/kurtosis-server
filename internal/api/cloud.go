@@ -26,6 +26,7 @@ type Port struct {
 
 type ServiceData struct {
 	ServiceName string
+	HostName    string
 	Namespace   string
 	Domain      string
 	Ports       []Port
@@ -109,15 +110,6 @@ func createService(data ServiceData) error {
 	}
 
 	return nil
-}
-
-func createServiceURLs(data ServiceData) []string {
-	urls := []string{}
-	for _, port := range data.Ports {
-		url := fmt.Sprintf("http://%s.%s/%s", data.ServiceName, data.Domain, port.PortName)
-		urls = append(urls, url)
-	}
-	return urls
 }
 
 func deleteServices(namespace string) error {
