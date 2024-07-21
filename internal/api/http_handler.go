@@ -106,6 +106,7 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 						"info":         progress.CurrentStepInfo[0],
 						"current_step": progress.CurrentStepNumber,
 						"total_steps":  progress.TotalSteps,
+						"type":         "progress",
 					}
 					outputJSON, err = json.Marshal(output)
 				}
@@ -115,12 +116,14 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 					"name":        instruction.InstructionName,
 					"instruction": instruction.ExecutableInstruction,
 					"arguments":   instruction.Arguments,
+					"type":        "instruction",
 				}
 				outputJSON, err = json.Marshal(output)
 			case *kurtosis_core_rpc_api_bindings.StarlarkRunResponseLine_InstructionResult:
 				result := detail.InstructionResult
 				output := map[string]interface{}{
 					"info": result.SerializedInstructionResult,
+					"type": "result",
 				}
 				outputJSON, err = json.Marshal(output)
 			case *kurtosis_core_rpc_api_bindings.StarlarkRunResponseLine_Error:
@@ -133,6 +136,7 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 				if detail.RunFinishedEvent.IsRunSuccessful {
 					output := map[string]interface{}{
 						"info": "Network run successfully",
+						"type": "progress",
 					}
 					outputJSON, err = json.Marshal(output)
 				} else {
@@ -142,6 +146,7 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 				info := detail.Info.GetInfoMessage()
 				outputJSON, err = json.Marshal(map[string]interface{}{
 					"info": info,
+					"type": "log",
 				})
 			default:
 				log.Printf("Received unexpected type in response line: %T", detail)
@@ -211,7 +216,7 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("Network started successfully with session ID: " + sessionID))
+	w.Write([]byte("Network initiated successfully with session ID: " + sessionID))
 }
 
 func StopNetwork(w http.ResponseWriter, r *http.Request) {
