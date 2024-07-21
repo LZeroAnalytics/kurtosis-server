@@ -109,6 +109,14 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 					}
 					outputJSON, err = json.Marshal(output)
 				}
+			case *kurtosis_core_rpc_api_bindings.StarlarkRunResponseLine_Instruction:
+				instruction := detail.Instruction
+				output := map[string]interface{}{
+					"name":        instruction.InstructionName,
+					"instruction": instruction.ExecutableInstruction,
+					"arguments":   instruction.Arguments,
+				}
+				outputJSON, err = json.Marshal(output)
 			case *kurtosis_core_rpc_api_bindings.StarlarkRunResponseLine_InstructionResult:
 				result := detail.InstructionResult
 				output := map[string]interface{}{
@@ -135,8 +143,6 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 				outputJSON, err = json.Marshal(map[string]interface{}{
 					"info": info,
 				})
-			case *kurtosis_core_rpc_api_bindings.StarlarkRunResponseLine_Instruction:
-				continue
 			default:
 				log.Printf("Received unexpected type in response line: %T", detail)
 				continue
