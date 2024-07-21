@@ -2,18 +2,23 @@ package main
 
 import (
 	"kurtosis-server/internal/api"
+	"kurtosis-server/internal/api/util"
 	"log"
 	"net/http"
 )
 
 func main() {
 
+	// Initialize Redis client
+	util.Init()
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", api.HandleRoot)
-	mux.HandleFunc("/run", api.RunPackage)
-	mux.HandleFunc("/stop", api.StopPackage)
+	mux.HandleFunc("/start", api.StartNetwork)
+	mux.HandleFunc("/stop", api.StopNetwork)
 	mux.HandleFunc("/services", api.GetServicesInfo)
 	mux.HandleFunc("/exec", api.ExecServiceCommand)
+	mux.HandleFunc("/stream", api.StreamOutput)
 
 	log.Println("Starting server on :8080")
 	if err := http.ListenAndServe(":8080", withCORS(mux)); err != nil {
