@@ -66,12 +66,6 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 	starlarkRunOptions := starlark_run_config.WithSerializedParams(string(paramsJSON))
 	starlarkRunConfig := starlark_run_config.NewRunStarlarkConfig(starlarkRunOptions)
 
-	responseLines, _, err := enclaveCtx.RunStarlarkRemotePackage(r.Context(), runPackageMessage.PackageURL, starlarkRunConfig)
-	if err != nil {
-		http.Error(w, "Failed to run Starlark package: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
 	newRedisSession := &util.RedisSession{
 		ResponseLines: []string{},
 	}
@@ -82,6 +76,21 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 	}
 
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("Recovered from panic in goroutine: %v", r)
+			}
+			log.Printf("Goroutine for session ID %s has finished execution.", sessionID)
+		}()
+
+		log.Printf("Goroutine for session ID %s has started.", sessionID)
+
+		responseLines, _, err := enclaveCtx.RunStarlarkRemotePackage(r.Context(), runPackageMessage.PackageURL, starlarkRunConfig)
+		if err != nil {
+			http.Error(w, "Failed to run Starlark package: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
 		for line := range responseLines {
 			if line == nil {
 				continue
