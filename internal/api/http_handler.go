@@ -85,7 +85,8 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 
 		log.Printf("Goroutine for session ID %s has started.", sessionID)
 
-		responseLines, _, err := enclaveCtx.RunStarlarkRemotePackage(r.Context(), runPackageMessage.PackageURL, starlarkRunConfig)
+		bgContext := context.Background()
+		responseLines, _, err := enclaveCtx.RunStarlarkRemotePackage(bgContext, runPackageMessage.PackageURL, starlarkRunConfig)
 		if err != nil {
 			log.Printf("Failed to run Starlark package for session ID %s: %v", sessionID, err)
 			return
