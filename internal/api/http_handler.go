@@ -51,6 +51,15 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	newRedisSession := &util.RedisSession{
+		ResponseLines: []string{},
+	}
+	err = util.StoreSession(sessionID, newRedisSession)
+	if err != nil {
+		http.Error(w, "Error storing session: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	kurtosisCtx, err := kurtosis_context.NewKurtosisContextFromLocalEngine()
 	if err != nil {
 		http.Error(w, "Failed to create Kurtosis context: "+err.Error(), http.StatusInternalServerError)
@@ -65,15 +74,6 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 
 	starlarkRunOptions := starlark_run_config.WithSerializedParams(string(paramsJSON))
 	starlarkRunConfig := starlark_run_config.NewRunStarlarkConfig(starlarkRunOptions)
-
-	newRedisSession := &util.RedisSession{
-		ResponseLines: []string{},
-	}
-	err = util.StoreSession(sessionID, newRedisSession)
-	if err != nil {
-		http.Error(w, "Error storing session: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
 
 	go func() {
 		defer func() {
