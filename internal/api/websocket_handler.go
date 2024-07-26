@@ -39,6 +39,12 @@ func StreamOutput(w http.ResponseWriter, r *http.Request) {
 			log.Printf("Error sending stored message: %v", err)
 		}
 	}
+
+	conn.SetPingHandler(func(appData string) error {
+		log.Printf("Received ping: %s", appData)
+		return conn.WriteMessage(websocket.PongMessage, []byte(appData))
+	})
+
 	subscribeToUpdates(sessionID, conn)
 	return
 }
