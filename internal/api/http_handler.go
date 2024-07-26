@@ -202,7 +202,7 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 				// Create Service data
 				serviceData := ServiceData{
 					ServiceName: serviceName,
-					HostName:    sessionID + "-" + serviceName,
+					HostName:    sessionID[:18] + "-" + serviceName,
 					Namespace:   "kt-" + enclaveName,
 					Domain:      "lzeroanalytics.com",
 					Ports:       ports,
