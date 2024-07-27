@@ -12,12 +12,12 @@ spec:
     http:
       paths:
       {{- range .Ports }}
-      - path: /{{ .PortName }}
-        pathType: Prefix
-        backend:
-          service:
-            name: {{ .ServiceName }}
-            port:
-              number: {{ .Port }}
+            - path: {{ if eq .PortName "" }}/{{ else }}/{{ .PortName }}{{ end }}
+              pathType: Prefix
+              backend:
+                service:
+                  name: {{ $.ServiceName }}
+                  port:
+                    number: {{ .Port }}
       {{- end }}
 
