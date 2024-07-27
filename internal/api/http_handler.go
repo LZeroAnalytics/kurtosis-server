@@ -81,7 +81,7 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 	for _, serviceMapping := range runPackageMessage.ServiceMappings {
 		ingressData := IngressData{
 			ServiceName: serviceMapping.ServiceName,
-			SessionID:   sessionID,
+			SessionID:   sessionID[:18],
 			Namespace:   "kt-" + enclaveName,
 			Ports:       serviceMapping.Ports,
 		}
