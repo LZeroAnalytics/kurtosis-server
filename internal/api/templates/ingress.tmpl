@@ -6,6 +6,9 @@ metadata:
   annotations:
     external-dns.alpha.kubernetes.io/hostname: {{ .ServiceName }}.{{ .SessionID }}.lzeroanalytics.com
     external-dns.alpha.kubernetes.io/ttl: "30"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-ssl-verify: "off"
     {{- if gt (len .Ports) 1 }}
     nginx.ingress.kubernetes.io/rewrite-target: /$2
     {{- end }}
