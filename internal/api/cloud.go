@@ -57,10 +57,15 @@ func createIngress(data IngressData) error {
 		return err
 	}
 
+	fmt.Printf("Created dynmao db client")
+	fmt.Printf("Trying to reduce Ports: %v", data.Ports)
+
 	// Serve on root path if only one port
 	if len(data.Ports) == 1 {
 		data.Ports[0].PortName = ""
 	}
+
+	fmt.Printf("Reduced ports: %v", data.Ports)
 
 	// Load the service template
 	templatePath := "/home/ubuntu/kurtosis-server/internal/api/templates/ingress.tmpl"
@@ -68,6 +73,8 @@ func createIngress(data IngressData) error {
 	if err != nil {
 		return err
 	}
+
+	fmt.Printf("Loaded template")
 
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, data); err != nil {
