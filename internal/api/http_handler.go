@@ -11,12 +11,17 @@ import (
 	"kurtosis-server/internal/api/util"
 	"log"
 	"net/http"
-	"regexp"
 )
 
 type RunPackageMessage struct {
-	PackageURL string                 `json:"package_url"`
-	Params     map[string]interface{} `json:"params"`
+	PackageURL      string                 `json:"package_url"`
+	Params          map[string]interface{} `json:"params"`
+	ServiceMappings []ServiceMapping       `json:"service_mappings"`
+}
+
+type ServiceMapping struct {
+	ServiceName string `json:"service_name"`
+	Ports       []Port `json:"ports"`
 }
 
 type ExecCommandRequest struct {
@@ -70,6 +75,20 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, "Failed to create enclave: "+err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	// Create ingresses for services
+	for _, serviceMapping := range runPackageMessage.ServiceMappings {
+		ingressData := IngressData{
+			ServiceName: serviceMapping.ServiceName,
+			SessionID:   sessionID,
+			Namespace:   "kt-" + enclaveName,
+			Ports:       serviceMapping.Ports,
+		}
+
+		if err := createIngress(ingressData); err != nil {
+			log.Printf("Failed to create ingress for service %s: %v", serviceMapping.ServiceName, err)
+		}
 	}
 
 	starlarkRunOptions := starlark_run_config.WithSerializedParams(string(paramsJSON))
@@ -179,37 +198,6 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 			log.Printf("Info: %s is ok: %v", info, ok)
 			if !ok {
 				continue
-			}
-
-			// Extract service name from info message
-			re := regexp.MustCompile(`Service '(.+?)' added with service.*`)
-			matches := re.FindStringSubmatch(info)
-			log.Printf("Matches: %v", matches)
-			if len(matches) > 1 {
-				serviceName := matches[1]
-
-				// Retrieve ports for the service
-				serviceCtx, err := enclaveCtx.GetServiceContext(serviceName)
-				if err != nil {
-					log.Printf("Failed to get service context for %s: %v", serviceName, err)
-					continue
-				}
-				ports := []Port{}
-				for portName, port := range serviceCtx.GetPrivatePorts() {
-					ports = append(ports, Port{PortName: portName, Port: int32(port.GetNumber())})
-				}
-
-				// Create Service data
-				ingressData := IngressData{
-					ServiceName: serviceName,
-					SessionID:   sessionID,
-					Namespace:   "kt-" + enclaveName,
-					Ports:       ports,
-				}
-
-				if err := createIngress(ingressData); err != nil {
-					log.Printf("Failed to create load balancer for service %s: %v", serviceName, err)
-				}
 			}
 		}
 	}()
