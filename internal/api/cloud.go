@@ -9,7 +9,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/scheme"
-	"strings"
 	"text/template"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -24,11 +23,10 @@ type Port struct {
 	Port     int32
 }
 
-type ServiceData struct {
+type IngressData struct {
 	ServiceName string
-	HostName    string
+	SessionID   string
 	Namespace   string
-	Domain      string
 	Ports       []Port
 }
 
@@ -38,7 +36,7 @@ func loadTemplate(templatePath string) (*template.Template, error) {
 		return nil, err
 	}
 
-	tmpl, err := template.New("service").Parse(string(content))
+	tmpl, err := template.New("ingress").Parse(string(content))
 	if err != nil {
 		return nil, err
 	}
@@ -46,7 +44,7 @@ func loadTemplate(templatePath string) (*template.Template, error) {
 	return tmpl, nil
 }
 
-func createService(data ServiceData) error {
+func createIngress(data IngressData) error {
 
 	fmt.Printf("Creating service with the following data: %v", data)
 	config, err := clientcmd.BuildConfigFromFlags("", "/home/ubuntu/.kube/config")
@@ -59,8 +57,13 @@ func createService(data ServiceData) error {
 		return err
 	}
 
+	// Serve on root path if only one port
+	if len(data.Ports) == 1 {
+		data.Ports[0].PortName = ""
+	}
+
 	// Load the service template
-	templatePath := "/home/ubuntu/kurtosis-server/internal/api/templates/service.tmpl"
+	templatePath := "/home/ubuntu/kurtosis-server/internal/api/templates/ingress.tmpl"
 	tmpl, err := loadTemplate(templatePath)
 	if err != nil {
 		return err
@@ -76,29 +79,29 @@ func createService(data ServiceData) error {
 	fmt.Println(buf.String())
 
 	// Convert the rendered template to an unstructured object
-	service := &unstructured.Unstructured{}
-	dec := runtime.DecodeInto(scheme.Codecs.UniversalDeserializer(), buf.Bytes(), service)
+	ingress := &unstructured.Unstructured{}
+	dec := runtime.DecodeInto(scheme.Codecs.UniversalDeserializer(), buf.Bytes(), ingress)
 	if dec != nil {
 		return err
 	}
 
-	fmt.Printf("Creating the following service: %v", service)
+	fmt.Printf("Creating the following ingress: %v", ingress)
 
 	resource := schema.GroupVersionResource{
-		Group:    "",
+		Group:    "networking.k8s.io",
 		Version:  "v1",
-		Resource: "services",
+		Resource: "ingresses",
 	}
 
 	namespace := data.Namespace
-	name := service.GetName()
+	name := ingress.GetName()
 
 	// Check if the service already exists
 	_, err = dynClient.Resource(resource).Namespace(namespace).Get(context.Background(), name, metav1.GetOptions{})
 	if err != nil {
 		if errors.IsNotFound(err) {
 			// Service does not exist, create it
-			_, err = dynClient.Resource(resource).Namespace(namespace).Create(context.Background(), service, metav1.CreateOptions{})
+			_, err = dynClient.Resource(resource).Namespace(namespace).Create(context.Background(), ingress, metav1.CreateOptions{})
 			if err != nil {
 				fmt.Printf("Error creating service: %v:", err)
 				return err
@@ -106,43 +109,6 @@ func createService(data ServiceData) error {
 		} else {
 			fmt.Printf("Service exists or other error: %v", err)
 			return err
-		}
-	}
-
-	return nil
-}
-
-func deleteServices(namespace string) error {
-	config, err := clientcmd.BuildConfigFromFlags("", "/home/ubuntu/.kube/config")
-	if err != nil {
-		return err
-	}
-
-	dynClient, err := dynamic.NewForConfig(config)
-	if err != nil {
-		return err
-	}
-
-	resource := schema.GroupVersionResource{
-		Group:    "",
-		Version:  "v1",
-		Resource: "services",
-	}
-
-	// List all services in the namespace
-	servicesList, err := dynClient.Resource(resource).Namespace(namespace).List(context.Background(), metav1.ListOptions{})
-	if err != nil {
-		return err
-	}
-
-	// Delete each load balancer service
-	for _, service := range servicesList.Items {
-		if strings.HasSuffix(service.GetName(), "-lb") {
-			err := dynClient.Resource(resource).Namespace(namespace).Delete(context.Background(), service.GetName(), metav1.DeleteOptions{})
-			if err != nil {
-				return err
-			}
-			fmt.Printf("Deleted service: %s\n", service.GetName())
 		}
 	}
 

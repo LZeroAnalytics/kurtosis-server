@@ -1,0 +1,23 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .ServiceName }}-ingress
+  namespace: {{ .Namespace }}
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: {{ .ServiceName }}.{{ .SessionID }}.lzeroanalytics.com
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: {{ .ServiceName }}.{{ .SessionID }}.lzeroanalytics.com
+    http:
+      paths:
+      {{- range .Ports }}
+      - path: /{{ .PortName }}
+        pathType: Prefix
+        backend:
+          service:
+            name: {{ .ServiceName }}
+            port:
+              number: {{ .Port }}
+      {{- end }}
+

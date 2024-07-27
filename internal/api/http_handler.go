@@ -200,15 +200,14 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 				}
 
 				// Create Service data
-				serviceData := ServiceData{
+				ingressData := IngressData{
 					ServiceName: serviceName,
-					HostName:    sessionID[:18] + "-" + serviceName,
+					SessionID:   sessionID,
 					Namespace:   "kt-" + enclaveName,
-					Domain:      "lzeroanalytics.com",
 					Ports:       ports,
 				}
 
-				if err := createService(serviceData); err != nil {
+				if err := createIngress(ingressData); err != nil {
 					log.Printf("Failed to create load balancer for service %s: %v", serviceName, err)
 				}
 			}
@@ -224,12 +223,6 @@ func StopNetwork(w http.ResponseWriter, r *http.Request) {
 	enclaveIdentifier := r.URL.Query().Get("enclaveIdentifier")
 	if enclaveIdentifier == "" {
 		http.Error(w, "Missing enclaveIdentifier query parameter", http.StatusBadRequest)
-		return
-	}
-
-	err := deleteServices("kt-" + enclaveIdentifier)
-	if err != nil {
-		http.Error(w, "Failed to delete ingresses: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
