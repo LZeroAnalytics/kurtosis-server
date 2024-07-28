@@ -65,35 +65,6 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	kurtosisCtx, err := kurtosis_context.NewKurtosisContextFromLocalEngine()
-	if err != nil {
-		http.Error(w, "Failed to create Kurtosis context: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	enclaveCtx, err := kurtosisCtx.CreateEnclave(context.Background(), enclaveName)
-	if err != nil {
-		http.Error(w, "Failed to create enclave: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	// Create ingresses for services
-	for _, serviceMapping := range runPackageMessage.ServiceMappings {
-		ingressData := IngressData{
-			ServiceName: serviceMapping.ServiceName,
-			SessionID:   sessionID[:18],
-			Namespace:   "kt-" + enclaveName,
-			Ports:       serviceMapping.Ports,
-		}
-
-		if err := createIngress(ingressData); err != nil {
-			log.Printf("Failed to create ingress for service %s: %v", serviceMapping.ServiceName, err)
-		}
-	}
-
-	starlarkRunOptions := starlark_run_config.WithSerializedParams(string(paramsJSON))
-	starlarkRunConfig := starlark_run_config.NewRunStarlarkConfig(starlarkRunOptions)
-
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -105,6 +76,36 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Goroutine for session ID %s has started.", sessionID)
 
 		bgContext := context.Background()
+
+		kurtosisCtx, err := kurtosis_context.NewKurtosisContextFromLocalEngine()
+		if err != nil {
+			http.Error(w, "Failed to create Kurtosis context: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		enclaveCtx, err := kurtosisCtx.CreateEnclave(bgContext, enclaveName)
+		if err != nil {
+			http.Error(w, "Failed to create enclave: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// Create ingresses for services
+		for _, serviceMapping := range runPackageMessage.ServiceMappings {
+			ingressData := IngressData{
+				ServiceName: serviceMapping.ServiceName,
+				SessionID:   sessionID[:18],
+				Namespace:   "kt-" + enclaveName,
+				Ports:       serviceMapping.Ports,
+			}
+
+			if err := createIngress(ingressData); err != nil {
+				log.Printf("Failed to create ingress for service %s: %v", serviceMapping.ServiceName, err)
+			}
+		}
+
+		starlarkRunOptions := starlark_run_config.WithSerializedParams(string(paramsJSON))
+		starlarkRunConfig := starlark_run_config.NewRunStarlarkConfig(starlarkRunOptions)
+
 		responseLines, _, err := enclaveCtx.RunStarlarkRemotePackage(bgContext, runPackageMessage.PackageURL, starlarkRunConfig)
 		if err != nil {
 			log.Printf("Failed to run Starlark package for session ID %s: %v", sessionID, err)
