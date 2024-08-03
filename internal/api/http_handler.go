@@ -11,6 +11,7 @@ import (
 	"kurtosis-server/internal/api/util"
 	"log"
 	"net/http"
+	"time"
 )
 
 type RunPackageMessage struct {
@@ -149,6 +150,15 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 			case *kurtosis_core_rpc_api_bindings.StarlarkRunResponseLine_Error:
 				log.Printf("Error during Starlark execution: %v", detail.Error)
 				outputJSON = []byte("Error: " + detail.Error.String())
+				deletionDate := time.Now().Format(time.RFC3339)
+				err = util.UpdateNetworkStatus(enclaveName, "Error", &deletionDate)
+				if err != nil {
+					log.Printf("Failed to update network status: %v", err)
+				}
+				if err := kurtosisCtx.DestroyEnclave(bgContext, enclaveName); err != nil {
+					log.Printf("Failed to destroy enclave after error: %v", err)
+				}
+
 			case *kurtosis_core_rpc_api_bindings.StarlarkRunResponseLine_Warning:
 				log.Printf("Warning: %s", detail.Warning.WarningMessage)
 				continue
@@ -159,6 +169,10 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 						"type": "progress",
 					}
 					outputJSON, err = json.Marshal(output)
+					err = util.UpdateNetworkStatus(enclaveName, "Operational", nil)
+					if err != nil {
+						log.Printf("Failed to update network status: %v", err)
+					}
 				} else {
 					log.Println("Starlark script failed to complete.")
 				}
@@ -215,6 +229,31 @@ func StopNetwork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get the current network status
+	status, err := util.GetNetworkStatus(enclaveIdentifier)
+	if err != nil {
+		http.Error(w, "Failed to get network status: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if status == "Error" {
+		log.Printf("Network %s is in Error state. Skipping enclave deletion.", enclaveIdentifier)
+
+		// Update the network status to Terminated
+		err = util.UpdateNetworkStatus(enclaveIdentifier, "Terminated", nil)
+		if err != nil {
+			http.Error(w, "Failed to update network status: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// Remove the corresponding Redis session
+		util.GetRedisClient().Del(util.GetContext(), enclaveIdentifier)
+
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Write([]byte("Enclave was already in Error state and has now been marked as Terminated."))
+		return
+	}
+
 	// Initialize the Kurtosis context
 	kurtosisCtx, err := kurtosis_context.NewKurtosisContextFromLocalEngine()
 	if err != nil {
@@ -229,8 +268,19 @@ func StopNetwork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Update the network status to Terminated
+	deletionDate := time.Now().Format(time.RFC3339)
+	err = util.UpdateNetworkStatus(enclaveIdentifier, "Terminated", &deletionDate)
+	if err != nil {
+		http.Error(w, "Failed to update network status: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Remove the corresponding Redis session
+	util.GetRedisClient().Del(util.GetContext(), enclaveIdentifier)
+
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Write([]byte("Enclave destroyed successfully"))
+	w.Write([]byte("Enclave destroyed successfully and network marked as Terminated."))
 }
 
 func GetServicesInfo(w http.ResponseWriter, r *http.Request) {
