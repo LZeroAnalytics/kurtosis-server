@@ -3,9 +3,9 @@ module kurtosis-server
 go 1.22.0
 
 require (
+	github.com/MicahParks/keyfunc v1.9.0
 	github.com/go-redis/redis/v8 v8.11.5
 	github.com/golang-jwt/jwt/v4 v4.5.0
-	github.com/google/uuid v1.4.0
 	github.com/gorilla/websocket v1.5.1
 	github.com/kurtosis-tech/kurtosis/api/golang v0.89.7
 	k8s.io/apimachinery v0.30.1
@@ -26,6 +26,7 @@ require (
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/golang/snappy v0.0.4 // indirect
 	github.com/google/gofuzz v1.2.0 // indirect
+	github.com/google/uuid v1.4.0 // indirect
 	github.com/imdario/mergo v0.3.6 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/kurtosis-tech/kurtosis-portal/api/golang v0.0.0-20230818182330-1a86869414d2 // indirect
