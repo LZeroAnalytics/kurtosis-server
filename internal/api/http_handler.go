@@ -57,6 +57,24 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	authorizationHeader := r.Header.Get("Authorization")
+
+	if authorizationHeader == "" {
+		http.Error(w, "Authorization header missing", http.StatusUnauthorized)
+		return
+	}
+
+	hasBillings, err := util.CheckUserBilling(authorizationHeader)
+	if err != nil {
+		http.Error(w, "Error checking billings: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if !hasBillings {
+		http.Error(w, "User does not have billing enabled", http.StatusUnauthorized)
+		return
+	}
+
 	newRedisSession := &util.RedisSession{
 		ResponseLines: []string{},
 	}
