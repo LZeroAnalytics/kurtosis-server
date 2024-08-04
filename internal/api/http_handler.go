@@ -126,7 +126,6 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			deletionDate := time.Now().Format(time.RFC3339)
 			util.UpdateNetworkStatus(enclaveName, "Error", &deletionDate)
-			kurtosisCtx.DestroyEnclave(bgContext, enclaveName)
 			http.Error(w, "Failed to create enclave: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -196,6 +195,15 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 				outputJSON, err = json.Marshal(output)
 			case *kurtosis_core_rpc_api_bindings.StarlarkRunResponseLine_Error:
 				log.Printf("Error during Starlark execution: %v", detail.Error)
+				status, err := util.GetNetworkStatus(enclaveName)
+				if err != nil {
+					log.Printf("Failed to retrieve network status: %v", err)
+					return
+				}
+				// Handle error because of user termination
+				if status == "Terminated" {
+					return
+				}
 				outputJSON = []byte("Error: " + detail.Error.String())
 				deletionDate := time.Now().Format(time.RFC3339)
 				err = util.UpdateNetworkStatus(enclaveName, "Error", &deletionDate)
