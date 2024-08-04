@@ -4,6 +4,7 @@ go 1.22.0
 
 require (
 	github.com/go-redis/redis/v8 v8.11.5
+	github.com/golang-jwt/jwt/v4 v4.5.0
 	github.com/google/uuid v1.4.0
 	github.com/gorilla/websocket v1.5.1
 	github.com/kurtosis-tech/kurtosis/api/golang v0.89.7

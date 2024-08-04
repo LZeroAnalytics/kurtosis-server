@@ -11,6 +11,7 @@ import (
 	"kurtosis-server/internal/api/util"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -247,6 +248,12 @@ func StopNetwork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	err := CheckOwnership(r, enclaveIdentifier)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+
 	// Get the current network status
 	status, err := util.GetNetworkStatus(enclaveIdentifier)
 	if err != nil {
@@ -307,6 +314,12 @@ func GetServicesInfo(w http.ResponseWriter, r *http.Request) {
 
 	if enclaveIdentifier == "" {
 		http.Error(w, "Missing enclaveIdentifier query parameter", http.StatusBadRequest)
+		return
+	}
+
+	err := CheckOwnership(r, enclaveIdentifier)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
 
@@ -393,6 +406,12 @@ func ExecServiceCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	err := CheckOwnership(r, req.EnclaveIdentifier)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+
 	// Initialize the Kurtosis context
 	kurtosisCtx, err := kurtosis_context.NewKurtosisContextFromLocalEngine()
 	if err != nil {
@@ -438,4 +457,37 @@ func ExecServiceCommand(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(responseJSON)
+}
+
+func CheckOwnership(r *http.Request, networkID string) error {
+	authorizationHeader := r.Header.Get("Authorization")
+
+	if authorizationHeader == "" {
+		return fmt.Errorf("authorization header missing")
+	}
+
+	parts := strings.Split(authorizationHeader, " ")
+	if len(parts) != 2 || parts[0] != "Bearer" {
+		return fmt.Errorf("invalid authorization header format")
+	}
+
+	accessToken := parts[1]
+
+	// Retrieve and verify the user ID
+	userID, err := util.GetUserIDFromToken(accessToken)
+	if err != nil {
+		return fmt.Errorf("invalid token: %v", err)
+	}
+
+	// Check if the user is the owner of the network
+	isOwner, err := util.IsNetworkOwner(networkID, userID)
+	if err != nil {
+		return fmt.Errorf("error checking network ownership: %v", err)
+	}
+
+	if !isOwner {
+		return fmt.Errorf("unauthorized: user is not the owner of the network")
+	}
+
+	return nil
 }

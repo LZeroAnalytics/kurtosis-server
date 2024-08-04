@@ -160,3 +160,40 @@ func getNetworkVersion(networkID string) (int, error) {
 
 	return 0, errors.New("could not retrieve network version")
 }
+
+// IsNetworkOwner checks if a user is the owner of a network
+func IsNetworkOwner(networkID, userID string) (bool, error) {
+	query := `query GetNetwork($id: ID!) {
+		getNetwork(id: $id) {
+			id
+			owner
+		}
+	}`
+
+	variables := map[string]interface{}{
+		"id": networkID,
+	}
+
+	body, err := makeGraphqlRequest(query, variables)
+	if err != nil {
+		return false, err
+	}
+
+	var result map[string]interface{}
+	err = json.Unmarshal(body, &result)
+	if err != nil {
+		return false, err
+	}
+
+	// Check if network exists and if the owner matches the userID
+	if data, ok := result["data"].(map[string]interface{}); ok {
+		if network, ok := data["getNetwork"].(map[string]interface{}); ok {
+			if owner, ok := network["owner"].(string); ok {
+				return owner == userID, nil
+			}
+		}
+	}
+
+	// If the network doesn't exist or owner doesn't match, return false
+	return false, nil
+}
