@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/google/uuid"
 	"github.com/kurtosis-tech/kurtosis/api/golang/core/kurtosis_core_rpc_api_bindings"
 	"github.com/kurtosis-tech/kurtosis/api/golang/core/lib/starlark_run_config"
 	"github.com/kurtosis-tech/kurtosis/api/golang/engine/lib/kurtosis_context"
@@ -41,7 +40,8 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.URL.Query().Get("sessionID")
 
 	if sessionID == "" {
-		sessionID = uuid.New().String()
+		http.Error(w, "Session ID missing", http.StatusBadRequest)
+		return
 	}
 
 	// Read message from request body
@@ -253,6 +253,8 @@ func StopNetwork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	log.Printf("Trying to stop the network: %v", enclaveIdentifier)
+
 	err := CheckOwnership(r, enclaveIdentifier)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
@@ -284,6 +286,14 @@ func StopNetwork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Update the network status to Terminated
+	deletionDate := time.Now().Format(time.RFC3339)
+	err = util.UpdateNetworkStatus(enclaveIdentifier, "Terminated", &deletionDate)
+	if err != nil {
+		http.Error(w, "Failed to update network status: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	// Initialize the Kurtosis context
 	kurtosisCtx, err := kurtosis_context.NewKurtosisContextFromLocalEngine()
 	if err != nil {
@@ -295,14 +305,6 @@ func StopNetwork(w http.ResponseWriter, r *http.Request) {
 	err = kurtosisCtx.DestroyEnclave(context.Background(), enclaveIdentifier)
 	if err != nil {
 		http.Error(w, "Failed to destroy enclave: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	// Update the network status to Terminated
-	deletionDate := time.Now().Format(time.RFC3339)
-	err = util.UpdateNetworkStatus(enclaveIdentifier, "Terminated", &deletionDate)
-	if err != nil {
-		http.Error(w, "Failed to update network status: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -478,19 +480,25 @@ func CheckOwnership(r *http.Request, networkID string) error {
 
 	accessToken := parts[1]
 
+	log.Printf("Access token: %v", accessToken)
+
 	// Retrieve and verify the user ID
 	userID, err := util.GetUserIDFromToken(accessToken)
 	if err != nil {
 		return fmt.Errorf("invalid token: %v", err)
 	}
 
+	log.Printf("User Id: %v", userID)
+
 	// Check if the user is the owner of the network
 	isOwner, err := util.IsNetworkOwner(networkID, userID)
 	if err != nil {
+		log.Printf("error checking network ownership: %v", err)
 		return fmt.Errorf("error checking network ownership: %v", err)
 	}
 
 	if !isOwner {
+		log.Printf("unauthorized: user is not the owner of the network")
 		return fmt.Errorf("unauthorized: user is not the owner of the network")
 	}
 
