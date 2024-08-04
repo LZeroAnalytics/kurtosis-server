@@ -65,11 +65,16 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	log.Printf("Got authorization header: %v", authorizationHeader)
+
 	hasBillings, err := util.CheckUserBilling(authorizationHeader)
 	if err != nil {
+		log.Printf("Error checking billing: %v", err)
 		http.Error(w, "Error checking billings: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	log.Printf("Checked billing: %v", hasBillings)
 
 	if !hasBillings {
 		http.Error(w, "User does not have billing enabled", http.StatusUnauthorized)
