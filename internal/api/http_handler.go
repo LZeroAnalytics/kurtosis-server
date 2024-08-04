@@ -44,16 +44,34 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	newRedisSession := &util.RedisSession{
+		ResponseLines: []string{},
+	}
+	err := util.StoreSession(sessionID, newRedisSession)
+	if err != nil {
+		http.Error(w, "Error storing session: "+err.Error(), http.StatusInternalServerError)
+		deletionDate := time.Now().Format(time.RFC3339)
+		util.UpdateNetworkStatus(enclaveName, "Error", &deletionDate)
+		if err != nil {
+			log.Printf("Failed to update network status: %v", err)
+		}
+		return
+	}
+
 	// Read message from request body
 	var runPackageMessage RunPackageMessage
-	err := json.NewDecoder(r.Body).Decode(&runPackageMessage)
+	err = json.NewDecoder(r.Body).Decode(&runPackageMessage)
 	if err != nil {
+		deletionDate := time.Now().Format(time.RFC3339)
+		util.UpdateNetworkStatus(enclaveName, "Error", &deletionDate)
 		http.Error(w, "Invalid message format: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	paramsJSON, err := json.Marshal(runPackageMessage.Params)
 	if err != nil {
+		deletionDate := time.Now().Format(time.RFC3339)
+		util.UpdateNetworkStatus(enclaveName, "Error", &deletionDate)
 		http.Error(w, "Failed to serialize parameters: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -61,6 +79,8 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 	authorizationHeader := r.Header.Get("Authorization")
 
 	if authorizationHeader == "" {
+		deletionDate := time.Now().Format(time.RFC3339)
+		util.UpdateNetworkStatus(enclaveName, "Error", &deletionDate)
 		http.Error(w, "Authorization header missing", http.StatusUnauthorized)
 		return
 	}
@@ -69,24 +89,16 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 
 	hasBillings, err := util.CheckUserBilling(authorizationHeader)
 	if err != nil {
-		log.Printf("Error checking billing: %v", err)
+		deletionDate := time.Now().Format(time.RFC3339)
+		util.UpdateNetworkStatus(enclaveName, "Error", &deletionDate)
 		http.Error(w, "Error checking billings: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	log.Printf("Checked billing: %v", hasBillings)
-
 	if !hasBillings {
+		deletionDate := time.Now().Format(time.RFC3339)
+		util.UpdateNetworkStatus(enclaveName, "Error", &deletionDate)
 		http.Error(w, "User does not have billing enabled", http.StatusUnauthorized)
-		return
-	}
-
-	newRedisSession := &util.RedisSession{
-		ResponseLines: []string{},
-	}
-	err = util.StoreSession(sessionID, newRedisSession)
-	if err != nil {
-		http.Error(w, "Error storing session: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -104,12 +116,17 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 
 		kurtosisCtx, err := kurtosis_context.NewKurtosisContextFromLocalEngine()
 		if err != nil {
+			deletionDate := time.Now().Format(time.RFC3339)
+			util.UpdateNetworkStatus(enclaveName, "Error", &deletionDate)
 			http.Error(w, "Failed to create Kurtosis context: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 
 		enclaveCtx, err := kurtosisCtx.CreateEnclave(bgContext, enclaveName)
 		if err != nil {
+			deletionDate := time.Now().Format(time.RFC3339)
+			util.UpdateNetworkStatus(enclaveName, "Error", &deletionDate)
+			kurtosisCtx.DestroyEnclave(bgContext, enclaveName)
 			http.Error(w, "Failed to create enclave: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -124,6 +141,9 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 			}
 
 			if err := createIngress(ingressData); err != nil {
+				deletionDate := time.Now().Format(time.RFC3339)
+				util.UpdateNetworkStatus(enclaveName, "Error", &deletionDate)
+				kurtosisCtx.DestroyEnclave(bgContext, enclaveName)
 				log.Printf("Failed to create ingress for service %s: %v", serviceMapping.ServiceName, err)
 			}
 		}
@@ -133,6 +153,9 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 
 		responseLines, _, err := enclaveCtx.RunStarlarkRemotePackage(bgContext, runPackageMessage.PackageURL, starlarkRunConfig)
 		if err != nil {
+			deletionDate := time.Now().Format(time.RFC3339)
+			util.UpdateNetworkStatus(enclaveName, "Error", &deletionDate)
+			kurtosisCtx.DestroyEnclave(bgContext, enclaveName)
 			log.Printf("Failed to run Starlark package for session ID %s: %v", sessionID, err)
 			return
 		}
@@ -220,6 +243,9 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 
 			err = util.StoreSession(sessionID, newRedisSession)
 			if err != nil {
+				deletionDate := time.Now().Format(time.RFC3339)
+				err = util.UpdateNetworkStatus(enclaveName, "Error", &deletionDate)
+				kurtosisCtx.DestroyEnclave(bgContext, enclaveName)
 				log.Printf("Error storing session: %v", err)
 			}
 
@@ -480,25 +506,19 @@ func CheckOwnership(r *http.Request, networkID string) error {
 
 	accessToken := parts[1]
 
-	log.Printf("Access token: %v", accessToken)
-
 	// Retrieve and verify the user ID
 	userID, err := util.GetUserIDFromToken(accessToken)
 	if err != nil {
 		return fmt.Errorf("invalid token: %v", err)
 	}
 
-	log.Printf("User Id: %v", userID)
-
 	// Check if the user is the owner of the network
 	isOwner, err := util.IsNetworkOwner(networkID, userID)
 	if err != nil {
-		log.Printf("error checking network ownership: %v", err)
 		return fmt.Errorf("error checking network ownership: %v", err)
 	}
 
 	if !isOwner {
-		log.Printf("unauthorized: user is not the owner of the network")
 		return fmt.Errorf("unauthorized: user is not the owner of the network")
 	}
 
