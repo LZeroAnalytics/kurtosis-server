@@ -122,11 +122,31 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		status, err := util.GetNetworkStatus(enclaveName)
+		if err != nil {
+			log.Printf("Failed to retrieve network status: %v", err)
+			return
+		}
+		// Handle error because of user termination
+		if status == "Terminated" {
+			return
+		}
+
 		enclaveCtx, err := kurtosisCtx.CreateEnclave(bgContext, enclaveName)
 		if err != nil {
 			deletionDate := time.Now().Format(time.RFC3339)
 			util.UpdateNetworkStatus(enclaveName, "Error", &deletionDate)
 			http.Error(w, "Failed to create enclave: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		status, err = util.GetNetworkStatus(enclaveName)
+		if err != nil {
+			log.Printf("Failed to retrieve network status: %v", err)
+			return
+		}
+		// Handle error because of user termination
+		if status == "Terminated" {
 			return
 		}
 
@@ -145,6 +165,16 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 				kurtosisCtx.DestroyEnclave(bgContext, enclaveName)
 				log.Printf("Failed to create ingress for service %s: %v", serviceMapping.ServiceName, err)
 			}
+		}
+
+		status, err = util.GetNetworkStatus(enclaveName)
+		if err != nil {
+			log.Printf("Failed to retrieve network status: %v", err)
+			return
+		}
+		// Handle error because of user termination
+		if status == "Terminated" {
+			return
 		}
 
 		starlarkRunOptions := starlark_run_config.WithSerializedParams(string(paramsJSON))
