@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/golang-jwt/jwt/v4"
+	"log"
 	"net/http"
 )
 
@@ -29,6 +30,7 @@ type jsonWebKey struct {
 // Fetch and parse the JWKS, and return the RSA public key for a given key ID (kid)
 func getRSAPublicKey(kid string) (*rsa.PublicKey, error) {
 	resp, err := http.Get(cognitoJWKSURL)
+	fmt.Printf("Got cognito response: %v", resp)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch JWKS: %v", err)
 	}
@@ -56,6 +58,7 @@ func generatePEM(cert string) string {
 // GetUserIDFromToken extracts and verifies the user ID (sub) from the JWT access token
 func GetUserIDFromToken(accessToken string) (string, error) {
 	token, err := jwt.Parse(accessToken, func(token *jwt.Token) (interface{}, error) {
+		log.Printf("Parsed token: %v", token)
 		// Verify the signing method is RSA
 		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
@@ -70,6 +73,8 @@ func GetUserIDFromToken(accessToken string) (string, error) {
 		// Get the RSA public key using the kid
 		return getRSAPublicKey(kid)
 	})
+
+	log.Printf("Finished processing token: %v", token)
 
 	if err != nil {
 		return "", fmt.Errorf("token verification failed: %v", err)
