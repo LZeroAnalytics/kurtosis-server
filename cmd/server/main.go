@@ -19,6 +19,7 @@ func main() {
 	mux.HandleFunc("/services", api.GetServicesInfo)
 	mux.HandleFunc("/exec", api.ExecServiceCommand)
 	mux.HandleFunc("/stream", api.StreamOutput)
+	mux.HandleFunc("/stream-logs", api.StreamServiceLogs)
 
 	log.Println("Starting server on :8080")
 	if err := http.ListenAndServe(":8080", withCORS(mux)); err != nil {
