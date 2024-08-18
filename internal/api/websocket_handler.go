@@ -9,6 +9,7 @@ import (
 	"kurtosis-server/internal/api/util"
 	"log"
 	"net/http"
+	"strconv"
 )
 
 var upgrader = websocket.Upgrader{
@@ -92,9 +93,16 @@ func subscribeToUpdates(sessionID string, conn *websocket.Conn) {
 func StreamServiceLogs(w http.ResponseWriter, r *http.Request) {
 	enclaveIdentifier := r.URL.Query().Get("enclaveIdentifier")
 	serviceName := r.URL.Query().Get("serviceName")
+	limit := r.URL.Query().Get("limit")
 
-	if enclaveIdentifier == "" || serviceName == "" {
+	if enclaveIdentifier == "" || serviceName == "" || limit == "" {
 		http.Error(w, "Missing enclaveIdentifier or serviceName query parameter", http.StatusBadRequest)
+		return
+	}
+
+	numLogLines, err := strconv.ParseUint(limit, 10, 32)
+	if err != nil || numLogLines == 0 {
+		http.Error(w, "Invalid limit parameter", http.StatusBadRequest)
 		return
 	}
 
@@ -137,7 +145,7 @@ func StreamServiceLogs(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	logStream, cleanupFunc, err := kurtosisCtx.GetServiceLogs(ctx, enclaveIdentifier, map[services.ServiceUUID]bool{serviceUUID: true}, true, true, 100, logLineFilter)
+	logStream, cleanupFunc, err := kurtosisCtx.GetServiceLogs(ctx, enclaveIdentifier, map[services.ServiceUUID]bool{serviceUUID: true}, true, false, uint32(numLogLines), logLineFilter)
 	if err != nil {
 		log.Printf("Failed to get service logs: %v", err)
 		conn.WriteMessage(websocket.TextMessage, []byte("Failed to get service logs"))

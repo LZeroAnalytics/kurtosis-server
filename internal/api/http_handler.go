@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/kurtosis-tech/kurtosis/api/golang/core/kurtosis_core_rpc_api_bindings"
+	"github.com/kurtosis-tech/kurtosis/api/golang/core/lib/services"
 	"github.com/kurtosis-tech/kurtosis/api/golang/core/lib/starlark_run_config"
 	"github.com/kurtosis-tech/kurtosis/api/golang/engine/lib/kurtosis_context"
 	"kurtosis-server/internal/api/util"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -561,4 +563,71 @@ func CheckOwnership(r *http.Request, networkID string) error {
 	}
 
 	return nil
+}
+
+func GetServiceLogsBatch(w http.ResponseWriter, r *http.Request) {
+	enclaveIdentifier := r.URL.Query().Get("enclaveIdentifier")
+	serviceName := r.URL.Query().Get("serviceName")
+	limit := r.URL.Query().Get("limit") // Number of log lines to fetch
+
+	if enclaveIdentifier == "" || serviceName == "" || limit == "" {
+		http.Error(w, "Missing parameters", http.StatusBadRequest)
+		return
+	}
+
+	numLogLines, err := strconv.ParseUint(limit, 10, 32)
+	if err != nil || numLogLines == 0 {
+		http.Error(w, "Invalid limit parameter", http.StatusBadRequest)
+		return
+	}
+
+	// Initialize the Kurtosis context
+	kurtosisCtx, err := kurtosis_context.NewKurtosisContextFromLocalEngine()
+	if err != nil {
+		http.Error(w, "Failed to create Kurtosis context: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Get the EnclaveContext
+	enclaveCtx, err := kurtosisCtx.GetEnclaveContext(context.Background(), enclaveIdentifier)
+	if err != nil {
+		http.Error(w, "Failed to get EnclaveContext: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Get the service UUID for the given service name
+	serviceCtx, err := enclaveCtx.GetServiceContext(serviceName)
+	if err != nil {
+		log.Printf("Failed to get Service UUID for service name '%s': %v", serviceName, err)
+		http.Error(w, "Failed to get Service UUID: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	serviceUUID := serviceCtx.GetServiceUUID()
+
+	logLineFilter := kurtosis_context.NewDoesContainTextLogLineFilter("")
+
+	logStream, cleanupFunc, err := kurtosisCtx.GetServiceLogs(context.Background(), enclaveIdentifier, map[services.ServiceUUID]bool{serviceUUID: true}, false, false, uint32(numLogLines), logLineFilter)
+	if err != nil {
+		log.Printf("Failed to get service logs: %v", err)
+		http.Error(w, "Failed to get service logs", http.StatusInternalServerError)
+		return
+	}
+	defer cleanupFunc()
+
+	var logs []string
+	for logContent := range logStream {
+		for _, logLine := range logContent.GetServiceLogsByServiceUuids()[serviceUUID] {
+			logs = append(logs, logLine.GetContent())
+		}
+	}
+
+	jsonResponse, err := json.Marshal(logs)
+	if err != nil {
+		log.Printf("Failed to marshal logs: %v", err)
+		http.Error(w, "Failed to process logs", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(jsonResponse)
 }
