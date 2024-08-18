@@ -305,6 +305,71 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 		}
+
+		// Stream service logs to redis
+		// Get the service identifiers
+		serviceIdentifiers, err := enclaveCtx.GetServices()
+		if err != nil {
+			http.Error(w, "Failed to get services: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// Convert service identifiers to the format needed by GetServiceContexts
+		serviceIdentifiersMap := make(map[string]bool)
+		for serviceName := range serviceIdentifiers {
+			serviceIdentifiersMap[string(serviceName)] = true
+		}
+
+		// Get the detailed service contexts
+		serviceContexts, err := enclaveCtx.GetServiceContexts(serviceIdentifiersMap)
+		if err != nil {
+			http.Error(w, "Failed to get service contexts: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// Iterate over service contexts
+		for _, serviceContext := range serviceContexts {
+			serviceName := string(serviceContext.GetServiceName())
+			// Check if the service name contains "node"
+			if !strings.Contains(serviceName, "node") {
+				continue
+			}
+
+			logLineFilter := kurtosis_context.NewDoesContainTextLogLineFilter("")
+			// Get logs for the node service
+			logStream, cleanupFunc, err := kurtosisCtx.GetServiceLogs(
+				context.Background(),
+				enclaveName,
+				map[services.ServiceUUID]bool{serviceContext.GetServiceUUID(): true},
+				true,          // Follow logs in real-time
+				true,          // Do not return all logs, but only the latest ones
+				100,           // Number of log lines to retrieve
+				logLineFilter, // Use an empty log line filter for now
+			)
+			if err != nil {
+				log.Printf("Failed to get service logs for service '%s': %v", serviceName, err)
+				continue
+			}
+			defer cleanupFunc()
+
+			// Stream logs into Redis
+			go func(enclaveName string, serviceName string) {
+				for logContent := range logStream {
+					logEntries := logContent.GetServiceLogsByServiceUuids()
+					for _, logLines := range logEntries {
+						for _, logLine := range logLines {
+							logLineContent := logLine.GetContent()
+
+							// Store the log line in Redis
+							err := util.StoreNodeLog(enclaveName, serviceName, logLineContent)
+							if err != nil {
+								log.Printf("Failed to store log for service '%s': %v", serviceName, err)
+							}
+						}
+					}
+				}
+			}(enclaveName, serviceName)
+		}
 	}()
 
 	w.WriteHeader(http.StatusOK)
@@ -565,74 +630,73 @@ func CheckOwnership(r *http.Request, networkID string) error {
 	return nil
 }
 
+// GetServiceLogsBatch retrieves logs for a given service from Redis based on the specified index range
 func GetServiceLogsBatch(w http.ResponseWriter, r *http.Request) {
 	enclaveIdentifier := r.URL.Query().Get("enclaveIdentifier")
 	serviceName := r.URL.Query().Get("serviceName")
-	limit := r.URL.Query().Get("limit") // Number of log lines to fetch
+	startIndexStr := r.URL.Query().Get("start")
+	endIndexStr := r.URL.Query().Get("end")
+	lastLogsStr := r.URL.Query().Get("last") // Optional: Retrieve the last 'n' logs
 
-	if enclaveIdentifier == "" || serviceName == "" || limit == "" {
-		http.Error(w, "Missing parameters", http.StatusBadRequest)
+	if serviceName == "" {
+		http.Error(w, "Missing serviceName query parameter", http.StatusBadRequest)
 		return
 	}
 
-	numLogLines, err := strconv.ParseUint(limit, 10, 32)
-	if err != nil || numLogLines == 0 {
-		http.Error(w, "Invalid limit parameter", http.StatusBadRequest)
-		return
-	}
+	var startIndex, endIndex int64
+	var err error
 
-	// Initialize the Kurtosis context
-	kurtosisCtx, err := kurtosis_context.NewKurtosisContextFromLocalEngine()
-	if err != nil {
-		http.Error(w, "Failed to create Kurtosis context: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	// Get the EnclaveContext
-	enclaveCtx, err := kurtosisCtx.GetEnclaveContext(context.Background(), enclaveIdentifier)
-	if err != nil {
-		http.Error(w, "Failed to get EnclaveContext: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	// Get the service UUID for the given service name
-	serviceCtx, err := enclaveCtx.GetServiceContext(serviceName)
-	if err != nil {
-		log.Printf("Failed to get Service UUID for service name '%s': %v", serviceName, err)
-		http.Error(w, "Failed to get Service UUID: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	serviceUUID := serviceCtx.GetServiceUUID()
-
-	logLineFilter := kurtosis_context.NewDoesContainTextLogLineFilter("")
-
-	logStream, cleanupFunc, err := kurtosisCtx.GetServiceLogs(context.Background(), enclaveIdentifier, map[services.ServiceUUID]bool{serviceUUID: true}, false, false, uint32(numLogLines), logLineFilter)
-	if err != nil {
-		log.Printf("Failed to get service logs: %v", err)
-		http.Error(w, "Failed to get service logs", http.StatusInternalServerError)
-		return
-	}
-	defer cleanupFunc()
-
-	// Circular buffer to store only the last 'limit' logs
-	logBuffer := make([]string, 0, numLogLines)
-
-	for logContent := range logStream {
-		for _, logLine := range logContent.GetServiceLogsByServiceUuids()[serviceUUID] {
-			if len(logBuffer) >= int(numLogLines) {
-				logBuffer = logBuffer[1:] // Remove the oldest log
-			}
-			logBuffer = append(logBuffer, logLine.GetContent()) // Add the new log
+	if lastLogsStr != "" {
+		// Retrieve the last 'n' logs
+		lastLogs, err := strconv.Atoi(lastLogsStr)
+		if err != nil {
+			http.Error(w, "Invalid 'last' value: "+err.Error(), http.StatusBadRequest)
+			return
 		}
+
+		// Calculate start and end indices for the last 'n' logs
+		endIndex = -1
+		startIndex = endIndex - int64(lastLogs) + 1
+	} else if startIndexStr != "" && endIndexStr != "" {
+		// Convert start and end indices to integers
+		startIndex, err = strconv.ParseInt(startIndexStr, 10, 64)
+		if err != nil {
+			http.Error(w, "Invalid start index: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		endIndex, err = strconv.ParseInt(endIndexStr, 10, 64)
+		if err != nil {
+			http.Error(w, "Invalid end index: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	} else {
+		http.Error(w, "Either 'start' and 'end' or 'last' query parameter must be provided", http.StatusBadRequest)
+		return
 	}
 
-	jsonResponse, err := json.Marshal(logBuffer)
+	// Fetch logs from Redis using the range command
+	logs, err := util.GetNodeLogs(enclaveIdentifier, serviceName, startIndex, endIndex)
 	if err != nil {
-		log.Printf("Failed to marshal logs: %v", err)
-		http.Error(w, "Failed to process logs", http.StatusInternalServerError)
+		http.Error(w, "Failed to retrieve logs from Redis: "+err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	// Determine the actual start and end indices of the returned logs
+	actualStartIndex := startIndex
+	actualEndIndex := startIndex + int64(len(logs)) - 1
+
+	// Prepare the response in JSON format
+	response := map[string]interface{}{
+		"serviceName": serviceName,
+		"startIndex":  actualStartIndex,
+		"endIndex":    actualEndIndex,
+		"logs":        logs,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.Write(jsonResponse)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		http.Error(w, "Failed to encode response: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 }

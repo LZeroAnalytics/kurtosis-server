@@ -1,15 +1,11 @@
 package api
 
 import (
-	"context"
 	"fmt"
 	"github.com/gorilla/websocket"
-	"github.com/kurtosis-tech/kurtosis/api/golang/core/lib/services"
-	"github.com/kurtosis-tech/kurtosis/api/golang/engine/lib/kurtosis_context"
 	"kurtosis-server/internal/api/util"
 	"log"
 	"net/http"
-	"strconv"
 )
 
 var upgrader = websocket.Upgrader{
@@ -93,16 +89,9 @@ func subscribeToUpdates(sessionID string, conn *websocket.Conn) {
 func StreamServiceLogs(w http.ResponseWriter, r *http.Request) {
 	enclaveIdentifier := r.URL.Query().Get("enclaveIdentifier")
 	serviceName := r.URL.Query().Get("serviceName")
-	limit := r.URL.Query().Get("limit")
 
-	if enclaveIdentifier == "" || serviceName == "" || limit == "" {
+	if enclaveIdentifier == "" || serviceName == "" {
 		http.Error(w, "Missing enclaveIdentifier or serviceName query parameter", http.StatusBadRequest)
-		return
-	}
-
-	numLogLines, err := strconv.ParseUint(limit, 10, 32)
-	if err != nil || numLogLines == 0 {
-		http.Error(w, "Invalid limit parameter", http.StatusBadRequest)
 		return
 	}
 
@@ -113,50 +102,25 @@ func StreamServiceLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	// Initialize Kurtosis context
-	kurtosisCtx, err := kurtosis_context.NewKurtosisContextFromLocalEngine()
+	// Function to handle the log entries received from Redis and send them to the WebSocket client
+	handleLog := func(logEntry string) {
+		if err := conn.WriteMessage(websocket.TextMessage, []byte(logEntry)); err != nil {
+			log.Printf("Error sending log line: %v", err)
+			conn.Close()
+			return
+		}
+	}
+
+	// Subscribe to the Redis logs channel
+	err = util.SubscribeToLogs(enclaveIdentifier, serviceName, handleLog)
 	if err != nil {
-		log.Printf("Failed to create Kurtosis context: %v", err)
-		conn.WriteMessage(websocket.TextMessage, []byte("Failed to create Kurtosis context"))
+		log.Printf("Failed to subscribe to logs: %v", err)
+		http.Error(w, "Failed to subscribe to logs", http.StatusInternalServerError)
 		return
 	}
 
-	// Get the EnclaveContext
-	enclaveCtx, err := kurtosisCtx.GetEnclaveContext(context.Background(), enclaveIdentifier)
-	if err != nil {
-		log.Printf("Failed to get EnclaveContext: %v", err)
-		conn.WriteMessage(websocket.TextMessage, []byte("Failed to get EnclaveContext"))
-		return
-	}
-
-	// Get the service UUID for the given service name
-	serviceCtx, err := enclaveCtx.GetServiceContext(serviceName)
-	if err != nil {
-		log.Printf("Failed to get Service UUID for service name '%s': %v", serviceName, err)
-		conn.WriteMessage(websocket.TextMessage, []byte("Failed to get Service for service name"))
-		return
-	}
-	serviceUUID := serviceCtx.GetServiceUUID()
-
-	// Create a log line filter (empty to get all logs)
-	logLineFilter := kurtosis_context.NewDoesContainTextLogLineFilter("")
-
-	// Create a cancellable context
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	logStream, cleanupFunc, err := kurtosisCtx.GetServiceLogs(ctx, enclaveIdentifier, map[services.ServiceUUID]bool{serviceUUID: true}, true, false, uint32(numLogLines), logLineFilter)
-	if err != nil {
-		log.Printf("Failed to get service logs: %v", err)
-		conn.WriteMessage(websocket.TextMessage, []byte("Failed to get service logs"))
-		return
-	}
-	defer cleanupFunc()
-
-	// Channel to signal when the client disconnects
+	// Wait for client disconnect
 	disconnect := make(chan struct{})
-
-	// Goroutine to listen for client disconnect
 	go func() {
 		defer close(disconnect)
 		for {
@@ -169,62 +133,7 @@ func StreamServiceLogs(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	// Circular buffer to store only the last 'limit' logs
-	logBuffer := make([]string, 0, numLogLines)
-
-	// Fill buffer with initial logs
-	for logContent := range logStream {
-		for _, logLine := range logContent.GetServiceLogsByServiceUuids()[serviceUUID] {
-			logLineContent := logLine.GetContent()
-
-			// Circular buffer logic
-			if len(logBuffer) >= int(numLogLines) {
-				logBuffer = logBuffer[1:] // Remove the oldest log
-			}
-			logBuffer = append(logBuffer, logLineContent)
-		}
-	}
-
-	// Send the buffered logs to the client before streaming new ones
-	for _, bufferedLog := range logBuffer {
-		if err := conn.WriteMessage(websocket.TextMessage, []byte(bufferedLog)); err != nil {
-			log.Printf("Error sending buffered log line: %v", err)
-			return
-		}
-	}
-
-	// Stream new logs to the WebSocket
-	for {
-		select {
-		case logContent, ok := <-logStream:
-			if !ok {
-				return // logStream is closed, exit the loop
-			}
-
-			for _, logLine := range logContent.GetServiceLogsByServiceUuids()[serviceUUID] {
-				logLineContent := logLine.GetContent()
-
-				// Circular buffer logic
-				if len(logBuffer) >= int(numLogLines) {
-					logBuffer = logBuffer[1:] // Remove the oldest log
-				}
-				logBuffer = append(logBuffer, logLineContent)
-
-				// Send only the new log line to the WebSocket client
-				if err := conn.WriteMessage(websocket.TextMessage, []byte(logLineContent)); err != nil {
-					log.Printf("Error sending log line: %v", err)
-					return
-				}
-			}
-
-			// Check if the service was not found
-			if _, notFound := logContent.GetNotFoundServiceUuids()[serviceUUID]; notFound {
-				conn.WriteMessage(websocket.TextMessage, []byte("Service UUID not found or no logs available"))
-				return
-			}
-
-		case <-disconnect:
-			return
-		}
-	}
+	// Block until the client disconnects
+	<-disconnect
+	log.Printf("Closing WebSocket connection for service: %s", serviceName)
 }

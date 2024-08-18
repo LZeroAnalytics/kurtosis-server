@@ -38,6 +38,57 @@ func StoreSession(sessionID string, session *RedisSession) error {
 	return err
 }
 
+// StoreNodeLog stores a log entry as a string and publishes it to a Redis channel.
+func StoreNodeLog(enclaveName string, serviceName string, logEntry string) error {
+	redisKey := "node-logs:" + serviceName + "-" + enclaveName
+	redisChannel := "log-channel:" + serviceName + "-" + enclaveName
+
+	// Store the log in a Redis list
+	err := redisClient.RPush(ctx, redisKey, logEntry).Err()
+	if err != nil {
+		return err
+	}
+
+	// Publish the log to the Redis channel for real-time subscription
+	err = redisClient.Publish(ctx, redisChannel, logEntry).Err()
+	return err
+}
+
+// GetNodeLogs retrieves logs from Redis within the specified range.
+func GetNodeLogs(enclaveName string, serviceName string, start, end int64) ([]string, error) {
+	redisKey := "node-logs:" + serviceName + "-" + enclaveName
+	logs, err := redisClient.LRange(ctx, redisKey, start, end).Result()
+	if err != nil {
+		return nil, err
+	}
+
+	return logs, nil
+}
+
+// SubscribeToLogs subscribes to real-time logs for a service.
+func SubscribeToLogs(enclaveName string, serviceName string, handleLog func(logEntry string)) error {
+	redisChannel := "log-channel:" + serviceName + "-" + enclaveName
+	pubsub := redisClient.Subscribe(ctx, redisChannel)
+
+	// Wait for confirmation that subscription is created before publishing anything.
+	_, err := pubsub.Receive(ctx)
+	if err != nil {
+		return err
+	}
+
+	// Go channel which receives messages.
+	ch := pubsub.Channel()
+
+	// Consume messages.
+	go func() {
+		for msg := range ch {
+			handleLog(msg.Payload)
+		}
+	}()
+
+	return nil
+}
+
 func GetSession(sessionID string) (*RedisSession, error) {
 	sessionData, err := redisClient.Get(ctx, sessionID).Result()
 	if err != nil {
