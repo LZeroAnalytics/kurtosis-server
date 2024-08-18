@@ -350,10 +350,11 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 				log.Printf("Failed to get service logs for service '%s': %v", serviceName, err)
 				continue
 			}
-			defer cleanupFunc()
 
 			// Stream logs into Redis
 			go func(enclaveName string, serviceName string) {
+				defer cleanupFunc()
+
 				for logContent := range logStream {
 					logEntries := logContent.GetServiceLogsByServiceUuids()
 					for _, logLines := range logEntries {
