@@ -172,7 +172,28 @@ func StreamServiceLogs(w http.ResponseWriter, r *http.Request) {
 	// Circular buffer to store only the last 'limit' logs
 	logBuffer := make([]string, 0, numLogLines)
 
-	// Stream logs to WebSocket
+	// Fill buffer with initial logs
+	for logContent := range logStream {
+		for _, logLine := range logContent.GetServiceLogsByServiceUuids()[serviceUUID] {
+			logLineContent := logLine.GetContent()
+
+			// Circular buffer logic
+			if len(logBuffer) >= int(numLogLines) {
+				logBuffer = logBuffer[1:] // Remove the oldest log
+			}
+			logBuffer = append(logBuffer, logLineContent)
+		}
+	}
+
+	// Send the buffered logs to the client before streaming new ones
+	for _, bufferedLog := range logBuffer {
+		if err := conn.WriteMessage(websocket.TextMessage, []byte(bufferedLog)); err != nil {
+			log.Printf("Error sending buffered log line: %v", err)
+			return
+		}
+	}
+
+	// Stream new logs to the WebSocket
 	for {
 		select {
 		case logContent, ok := <-logStream:
@@ -183,13 +204,13 @@ func StreamServiceLogs(w http.ResponseWriter, r *http.Request) {
 			for _, logLine := range logContent.GetServiceLogsByServiceUuids()[serviceUUID] {
 				logLineContent := logLine.GetContent()
 
-				// Manage circular buffer: only keep the last 'limit' logs
+				// Circular buffer logic
 				if len(logBuffer) >= int(numLogLines) {
 					logBuffer = logBuffer[1:] // Remove the oldest log
 				}
 				logBuffer = append(logBuffer, logLineContent)
 
-				// Send the new log line to the WebSocket client
+				// Send only the new log line to the WebSocket client
 				if err := conn.WriteMessage(websocket.TextMessage, []byte(logLineContent)); err != nil {
 					log.Printf("Error sending log line: %v", err)
 					return
@@ -203,7 +224,6 @@ func StreamServiceLogs(w http.ResponseWriter, r *http.Request) {
 			}
 
 		case <-disconnect:
-			// The client has disconnected
 			return
 		}
 	}
