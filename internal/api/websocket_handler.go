@@ -17,6 +17,12 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
+var logUpgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool {
+		return true
+	},
+}
+
 func StreamOutput(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.URL.Query().Get("sessionID")
 
@@ -92,7 +98,7 @@ func StreamServiceLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	conn, err := upgrader.Upgrade(w, r, nil)
+	conn, err := logUpgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("Failed to upgrade to WebSocket: %v", err)
 		return
@@ -141,6 +147,8 @@ func StreamServiceLogs(w http.ResponseWriter, r *http.Request) {
 			logLineContent := logLine.GetContent()
 			if err := conn.WriteMessage(websocket.TextMessage, []byte(logLineContent)); err != nil {
 				log.Printf("Error sending log line: %v", err)
+
+				conn.Close()
 				return
 			}
 		}
@@ -151,4 +159,5 @@ func StreamServiceLogs(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	conn.Close()
 }
