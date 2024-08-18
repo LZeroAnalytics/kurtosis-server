@@ -133,7 +133,11 @@ func StreamServiceLogs(w http.ResponseWriter, r *http.Request) {
 	// Create a log line filter (empty to get all logs)
 	logLineFilter := kurtosis_context.NewDoesContainTextLogLineFilter("")
 
-	logStream, cleanupFunc, err := kurtosisCtx.GetServiceLogs(context.Background(), enclaveIdentifier, map[services.ServiceUUID]bool{serviceUUID: true}, true, true, 100, logLineFilter)
+	// Create a cancellable context
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	logStream, cleanupFunc, err := kurtosisCtx.GetServiceLogs(ctx, enclaveIdentifier, map[services.ServiceUUID]bool{serviceUUID: true}, true, true, 100, logLineFilter)
 	if err != nil {
 		log.Printf("Failed to get service logs: %v", err)
 		conn.WriteMessage(websocket.TextMessage, []byte("Failed to get service logs"))
@@ -141,23 +145,48 @@ func StreamServiceLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	defer cleanupFunc()
 
-	// Stream logs to WebSocket
-	for logContent := range logStream {
-		for _, logLine := range logContent.GetServiceLogsByServiceUuids()[serviceUUID] {
-			logLineContent := logLine.GetContent()
-			if err := conn.WriteMessage(websocket.TextMessage, []byte(logLineContent)); err != nil {
-				log.Printf("Error sending log line: %v", err)
+	// Channel to signal when the client disconnects
+	disconnect := make(chan struct{})
 
-				conn.Close()
+	// Goroutine to listen for client disconnect
+	go func() {
+		defer close(disconnect)
+		for {
+			_, _, err := conn.ReadMessage()
+			if err != nil {
+				// Client has disconnected or an error occurred
+				log.Printf("Client disconnected: %v", err)
 				return
 			}
 		}
+	}()
 
-		// Check if the service was not found
-		if _, notFound := logContent.GetNotFoundServiceUuids()[serviceUUID]; notFound {
-			conn.WriteMessage(websocket.TextMessage, []byte("Service UUID not found or no logs available"))
+	// Stream logs to WebSocket
+	for {
+		select {
+		case logContent, ok := <-logStream:
+			if !ok {
+				return // logStream is closed, exit the loop
+			}
+
+			for _, logLine := range logContent.GetServiceLogsByServiceUuids()[serviceUUID] {
+				logLineContent := logLine.GetContent()
+				if err := conn.WriteMessage(websocket.TextMessage, []byte(logLineContent)); err != nil {
+					log.Printf("Error sending log line: %v", err)
+					return
+				}
+			}
+
+			// Check if the service was not found
+			if _, notFound := logContent.GetNotFoundServiceUuids()[serviceUUID]; notFound {
+				conn.WriteMessage(websocket.TextMessage, []byte("Service UUID not found or no logs available"))
+				return
+			}
+
+		case <-disconnect:
+			// The client has disconnected
+			cancel() // Cancel the log streaming context
 			return
 		}
 	}
-	conn.Close()
 }
