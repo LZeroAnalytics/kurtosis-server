@@ -614,14 +614,19 @@ func GetServiceLogsBatch(w http.ResponseWriter, r *http.Request) {
 	}
 	defer cleanupFunc()
 
-	var logs []string
+	// Circular buffer to store only the last 'limit' logs
+	logBuffer := make([]string, 0, numLogLines)
+
 	for logContent := range logStream {
 		for _, logLine := range logContent.GetServiceLogsByServiceUuids()[serviceUUID] {
-			logs = append(logs, logLine.GetContent())
+			if len(logBuffer) >= int(numLogLines) {
+				logBuffer = logBuffer[1:] // Remove the oldest log
+			}
+			logBuffer = append(logBuffer, logLine.GetContent()) // Add the new log
 		}
 	}
 
-	jsonResponse, err := json.Marshal(logs)
+	jsonResponse, err := json.Marshal(logBuffer)
 	if err != nil {
 		log.Printf("Failed to marshal logs: %v", err)
 		http.Error(w, "Failed to process logs", http.StatusInternalServerError)
