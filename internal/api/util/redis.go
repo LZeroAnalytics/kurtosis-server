@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"fmt"
 	"github.com/go-redis/redis/v8"
 	"time"
 )
@@ -62,7 +63,23 @@ func GetNodeLogs(enclaveName string, serviceName string, start, end int64) ([]st
 		return nil, err
 	}
 
-	return logs, nil
+	// Create a slice to hold the logs with their indices
+	logsWithIndices := make([]string, len(logs))
+
+	// Iterate over the logs and add the index to each log entry
+	for i, log := range logs {
+		logEntry := map[string]interface{}{
+			"index": start + int64(i),
+			"log":   log,
+		}
+		logEntryJSON, err := json.Marshal(logEntry)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal log entry: %v", err)
+		}
+		logsWithIndices[i] = string(logEntryJSON)
+	}
+
+	return logsWithIndices, nil
 }
 
 // SubscribeToLogs subscribes to real-time logs for a service.
