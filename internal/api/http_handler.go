@@ -433,6 +433,44 @@ func StopNetwork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	enclaveCtx, err := kurtosisCtx.GetEnclaveContext(context.Background(), enclaveIdentifier)
+	if err != nil {
+		http.Error(w, "Failed to get EnclaveContext: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Stream service logs to redis
+	// Get the service identifiers
+	serviceIdentifiers, err := enclaveCtx.GetServices()
+	if err != nil {
+		http.Error(w, "Failed to get services: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Convert service identifiers to the format needed by GetServiceContexts
+	serviceIdentifiersMap := make(map[string]bool)
+	for serviceName := range serviceIdentifiers {
+		serviceIdentifiersMap[string(serviceName)] = true
+	}
+
+	// Get the detailed service contexts
+	serviceContexts, err := enclaveCtx.GetServiceContexts(serviceIdentifiersMap)
+	if err != nil {
+		http.Error(w, "Failed to get service contexts: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Iterate over service contexts
+	for _, serviceContext := range serviceContexts {
+		serviceName := string(serviceContext.GetServiceName())
+		// Check if the service name contains "node"
+		if !strings.Contains(serviceName, "node") {
+			continue
+		}
+		util.GetRedisClient().Del(util.GetContext(), "node-logs:"+serviceName+"-"+enclaveIdentifier)
+		util.GetRedisClient().Del(util.GetContext(), "log-channel:"+serviceName+"-"+enclaveIdentifier)
+	}
+
 	// Destroy the enclave
 	err = kurtosisCtx.DestroyEnclave(context.Background(), enclaveIdentifier)
 	if err != nil {
