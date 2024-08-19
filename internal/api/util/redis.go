@@ -82,7 +82,26 @@ func SubscribeToLogs(enclaveName string, serviceName string, handleLog func(logE
 	// Consume messages.
 	go func() {
 		for msg := range ch {
-			handleLog(msg.Payload)
+			redisKey := "node-logs:" + serviceName + "-" + enclaveName
+			index, err := redisClient.LPos(ctx, redisKey, msg.Payload, redis.LPosArgs{}).Result()
+			if err != nil {
+				continue
+			}
+
+			// Create a JSON object with the index and log entry
+			logEntryWithIndex := map[string]interface{}{
+				"index": index,
+				"log":   msg.Payload,
+			}
+
+			// Convert the JSON object to a string
+			logEntryWithIndexJSON, err := json.Marshal(logEntryWithIndex)
+			if err != nil {
+				continue
+			}
+
+			// Pass the JSON string to the handler
+			handleLog(string(logEntryWithIndexJSON))
 		}
 	}()
 
