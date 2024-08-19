@@ -66,7 +66,7 @@ func GetNodeLogs(enclaveName string, serviceName string, start, end int64) ([]st
 }
 
 // SubscribeToLogs subscribes to real-time logs for a service.
-func SubscribeToLogs(enclaveName string, serviceName string, handleLog func(logEntry string)) error {
+func SubscribeToLogs(ctx context.Context, enclaveName string, serviceName string, handleLog func(logEntry string)) error {
 	redisChannel := "log-channel:" + serviceName + "-" + enclaveName
 	pubsub := redisClient.Subscribe(ctx, redisChannel)
 
@@ -81,27 +81,34 @@ func SubscribeToLogs(enclaveName string, serviceName string, handleLog func(logE
 
 	// Consume messages.
 	go func() {
-		for msg := range ch {
-			redisKey := "node-logs:" + serviceName + "-" + enclaveName
-			index, err := redisClient.LPos(ctx, redisKey, msg.Payload, redis.LPosArgs{}).Result()
-			if err != nil {
-				continue
-			}
+		defer pubsub.Close()
+		for {
+			select {
+			case msg := <-ch:
 
-			// Create a JSON object with the index and log entry
-			logEntryWithIndex := map[string]interface{}{
-				"index": index,
-				"log":   msg.Payload,
-			}
+				redisKey := "node-logs:" + serviceName + "-" + enclaveName
+				index, err := redisClient.LPos(ctx, redisKey, msg.Payload, redis.LPosArgs{}).Result()
+				if err != nil {
+					continue
+				}
 
-			// Convert the JSON object to a string
-			logEntryWithIndexJSON, err := json.Marshal(logEntryWithIndex)
-			if err != nil {
-				continue
-			}
+				// Create a JSON object with the index and log entry
+				logEntryWithIndex := map[string]interface{}{
+					"index": index,
+					"log":   msg.Payload,
+				}
 
-			// Pass the JSON string to the handler
-			handleLog(string(logEntryWithIndexJSON))
+				// Convert the JSON object to a string
+				logEntryWithIndexJSON, err := json.Marshal(logEntryWithIndex)
+				if err != nil {
+					continue
+				}
+
+				// Pass the JSON string to the handler
+				handleLog(string(logEntryWithIndexJSON))
+			case <-ctx.Done():
+				return
+			}
 		}
 	}()
 

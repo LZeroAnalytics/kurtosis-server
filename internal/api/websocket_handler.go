@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"github.com/gorilla/websocket"
 	"kurtosis-server/internal/api/util"
@@ -102,17 +103,22 @@ func StreamServiceLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
+	// Create a cancellable context
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	// Function to handle the log entries received from Redis and send them to the WebSocket client
 	handleLog := func(logEntry string) {
 		if err := conn.WriteMessage(websocket.TextMessage, []byte(logEntry)); err != nil {
 			log.Printf("Error sending log line: %v", err)
+			cancel()
 			conn.Close()
 			return
 		}
 	}
 
 	// Subscribe to the Redis logs channel
-	err = util.SubscribeToLogs(enclaveIdentifier, serviceName, handleLog)
+	err = util.SubscribeToLogs(ctx, enclaveIdentifier, serviceName, handleLog)
 	if err != nil {
 		log.Printf("Failed to subscribe to logs: %v", err)
 		http.Error(w, "Failed to subscribe to logs", http.StatusInternalServerError)
@@ -128,6 +134,7 @@ func StreamServiceLogs(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				// Client has disconnected or an error occurred
 				log.Printf("Client disconnected: %v", err)
+				cancel()
 				return
 			}
 		}
