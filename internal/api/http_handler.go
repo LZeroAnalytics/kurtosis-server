@@ -393,96 +393,99 @@ func StopNetwork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get the current network status
-	status, err := util.GetNetworkStatus(enclaveIdentifier)
-	if err != nil {
-		http.Error(w, "Failed to get network status: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
+	// Respond immediately to the client
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Write([]byte("Network termination process started."))
 
-	if status == "Error" {
-		log.Printf("Network %s is in Error state. Skipping enclave deletion.", enclaveIdentifier)
+	// Run the network stop process in a goroutine
+	go func() {
+		// Get the current network status
+		status, err := util.GetNetworkStatus(enclaveIdentifier)
+		if err != nil {
+			log.Printf("Failed to get network status: %v", err)
+			return
+		}
+
+		if status == "Error" {
+			log.Printf("Network %s is in Error state. Skipping enclave deletion.", enclaveIdentifier)
+
+			// Update the network status to Terminated
+			err = util.UpdateNetworkStatus(enclaveIdentifier, "Terminated", nil)
+			if err != nil {
+				log.Printf("Failed to update network status: %v", err)
+				return
+			}
+
+			// Remove the corresponding Redis session
+			util.GetRedisClient().Del(util.GetContext(), enclaveIdentifier)
+			return
+		}
 
 		// Update the network status to Terminated
-		err = util.UpdateNetworkStatus(enclaveIdentifier, "Terminated", nil)
+		deletionDate := time.Now().Format(time.RFC3339)
+		err = util.UpdateNetworkStatus(enclaveIdentifier, "Terminated", &deletionDate)
 		if err != nil {
-			http.Error(w, "Failed to update network status: "+err.Error(), http.StatusInternalServerError)
+			log.Printf("Failed to update network status: %v", err)
+			return
+		}
+
+		// Initialize the Kurtosis context
+		kurtosisCtx, err := kurtosis_context.NewKurtosisContextFromLocalEngine()
+		if err != nil {
+			log.Printf("Failed to create Kurtosis context: %v", err)
+			return
+		}
+
+		enclaveCtx, err := kurtosisCtx.GetEnclaveContext(context.Background(), enclaveIdentifier)
+		if err != nil {
+			log.Printf("Failed to get EnclaveContext: %v", err)
+			return
+		}
+
+		// Stream service logs to redis
+		// Get the service identifiers
+		serviceIdentifiers, err := enclaveCtx.GetServices()
+		if err != nil {
+			log.Printf("Failed to get services: %v", err)
+			return
+		}
+
+		// Convert service identifiers to the format needed by GetServiceContexts
+		serviceIdentifiersMap := make(map[string]bool)
+		for serviceName := range serviceIdentifiers {
+			serviceIdentifiersMap[string(serviceName)] = true
+		}
+
+		// Get the detailed service contexts
+		serviceContexts, err := enclaveCtx.GetServiceContexts(serviceIdentifiersMap)
+		if err != nil {
+			log.Printf("Failed to get service contexts: %v", err)
+			return
+		}
+
+		// Iterate over service contexts
+		for _, serviceContext := range serviceContexts {
+			serviceName := string(serviceContext.GetServiceName())
+			// Check if the service name contains "node"
+			if !strings.Contains(serviceName, "node") {
+				continue
+			}
+			util.GetRedisClient().Del(util.GetContext(), "node-logs:"+serviceName+"-"+enclaveIdentifier)
+			util.GetRedisClient().Del(util.GetContext(), "log-channel:"+serviceName+"-"+enclaveIdentifier)
+		}
+
+		// Destroy the enclave
+		err = kurtosisCtx.DestroyEnclave(context.Background(), enclaveIdentifier)
+		if err != nil {
+			log.Printf("Failed to destroy enclave: %v", err)
 			return
 		}
 
 		// Remove the corresponding Redis session
 		util.GetRedisClient().Del(util.GetContext(), enclaveIdentifier)
 
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Write([]byte("Enclave was already in Error state and has now been marked as Terminated."))
-		return
-	}
-
-	// Update the network status to Terminated
-	deletionDate := time.Now().Format(time.RFC3339)
-	err = util.UpdateNetworkStatus(enclaveIdentifier, "Terminated", &deletionDate)
-	if err != nil {
-		http.Error(w, "Failed to update network status: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	// Initialize the Kurtosis context
-	kurtosisCtx, err := kurtosis_context.NewKurtosisContextFromLocalEngine()
-	if err != nil {
-		http.Error(w, "Failed to create Kurtosis context: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	enclaveCtx, err := kurtosisCtx.GetEnclaveContext(context.Background(), enclaveIdentifier)
-	if err != nil {
-		http.Error(w, "Failed to get EnclaveContext: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	// Stream service logs to redis
-	// Get the service identifiers
-	serviceIdentifiers, err := enclaveCtx.GetServices()
-	if err != nil {
-		http.Error(w, "Failed to get services: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	// Convert service identifiers to the format needed by GetServiceContexts
-	serviceIdentifiersMap := make(map[string]bool)
-	for serviceName := range serviceIdentifiers {
-		serviceIdentifiersMap[string(serviceName)] = true
-	}
-
-	// Get the detailed service contexts
-	serviceContexts, err := enclaveCtx.GetServiceContexts(serviceIdentifiersMap)
-	if err != nil {
-		http.Error(w, "Failed to get service contexts: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	// Iterate over service contexts
-	for _, serviceContext := range serviceContexts {
-		serviceName := string(serviceContext.GetServiceName())
-		// Check if the service name contains "node"
-		if !strings.Contains(serviceName, "node") {
-			continue
-		}
-		util.GetRedisClient().Del(util.GetContext(), "node-logs:"+serviceName+"-"+enclaveIdentifier)
-		util.GetRedisClient().Del(util.GetContext(), "log-channel:"+serviceName+"-"+enclaveIdentifier)
-	}
-
-	// Destroy the enclave
-	err = kurtosisCtx.DestroyEnclave(context.Background(), enclaveIdentifier)
-	if err != nil {
-		http.Error(w, "Failed to destroy enclave: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	// Remove the corresponding Redis session
-	util.GetRedisClient().Del(util.GetContext(), enclaveIdentifier)
-
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Write([]byte("Enclave destroyed successfully and network marked as Terminated."))
+		log.Printf("Enclave destroyed successfully and network marked as Terminated.")
+	}()
 }
 
 func GetServicesInfo(w http.ResponseWriter, r *http.Request) {
