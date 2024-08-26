@@ -7,7 +7,7 @@ require (
 	github.com/go-redis/redis/v8 v8.11.5
 	github.com/golang-jwt/jwt/v4 v4.5.0
 	github.com/gorilla/websocket v1.5.1
-	github.com/kurtosis-tech/kurtosis/api/golang v0.89.7
+	github.com/kurtosis-tech/kurtosis/api/golang v1.1.0
 	k8s.io/apimachinery v0.30.1
 	k8s.io/client-go v0.30.1
 )
