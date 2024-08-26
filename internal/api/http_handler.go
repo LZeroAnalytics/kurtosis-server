@@ -393,41 +393,40 @@ func StopNetwork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Respond immediately to the client
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Write([]byte("Network termination process started."))
+	// Get the current network status
+	status, err := util.GetNetworkStatus(enclaveIdentifier)
+	if err != nil {
+		log.Printf("Failed to get network status: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
-	// Run the network stop process in a goroutine
-	go func() {
-		// Get the current network status
-		status, err := util.GetNetworkStatus(enclaveIdentifier)
+	if status == "Error" {
+		log.Printf("Network %s is in Error state. Skipping enclave deletion.", enclaveIdentifier)
+
+		// Update the network status to Terminated
+		err = util.UpdateNetworkStatus(enclaveIdentifier, "Terminated", nil)
 		if err != nil {
-			log.Printf("Failed to get network status: %v", err)
+			log.Printf("Failed to update network status: %v", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-
-		if status == "Error" {
-			log.Printf("Network %s is in Error state. Skipping enclave deletion.", enclaveIdentifier)
-
-			// Update the network status to Terminated
-			err = util.UpdateNetworkStatus(enclaveIdentifier, "Terminated", nil)
-			if err != nil {
-				log.Printf("Failed to update network status: %v", err)
-				return
-			}
-
-			// Remove the corresponding Redis session
-			util.GetRedisClient().Del(util.GetContext(), enclaveIdentifier)
-			return
-		}
-
+	} else {
 		// Update the network status to Terminated
 		deletionDate := time.Now().Format(time.RFC3339)
 		err = util.UpdateNetworkStatus(enclaveIdentifier, "Terminated", &deletionDate)
 		if err != nil {
 			log.Printf("Failed to update network status: %v", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+	}
+
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Write([]byte("Network termination process started."))
+
+	// Run the network stop process in a goroutine
+	go func() {
 
 		// Initialize the Kurtosis context
 		kurtosisCtx, err := kurtosis_context.NewKurtosisContextFromLocalEngine()
@@ -442,7 +441,6 @@ func StopNetwork(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Stream service logs to redis
 		// Get the service identifiers
 		serviceIdentifiers, err := enclaveCtx.GetServices()
 		if err != nil {
@@ -474,15 +472,15 @@ func StopNetwork(w http.ResponseWriter, r *http.Request) {
 			util.GetRedisClient().Del(util.GetContext(), "log-channel:"+serviceName+"-"+enclaveIdentifier)
 		}
 
+		// Remove the corresponding Redis session
+		util.GetRedisClient().Del(util.GetContext(), enclaveIdentifier)
+
 		// Destroy the enclave
 		err = kurtosisCtx.DestroyEnclave(context.Background(), enclaveIdentifier)
 		if err != nil {
 			log.Printf("Failed to destroy enclave: %v", err)
 			return
 		}
-
-		// Remove the corresponding Redis session
-		util.GetRedisClient().Del(util.GetContext(), enclaveIdentifier)
 
 		log.Printf("Enclave destroyed successfully and network marked as Terminated.")
 	}()
