@@ -475,11 +475,13 @@ func StopNetwork(w http.ResponseWriter, r *http.Request) {
 		// Remove the corresponding Redis session
 		util.GetRedisClient().Del(util.GetContext(), enclaveIdentifier)
 
-		// Destroy the enclave
-		err = kurtosisCtx.DestroyEnclave(context.Background(), enclaveIdentifier)
-		if err != nil {
-			log.Printf("Failed to destroy enclave: %v", err)
-			return
+		if status != "Error" {
+			// Destroy the enclave
+			err = kurtosisCtx.DestroyEnclave(context.Background(), enclaveIdentifier)
+			if err != nil {
+				log.Printf("Failed to destroy enclave: %v", err)
+				return
+			}
 		}
 
 		log.Printf("Enclave destroyed successfully and network marked as Terminated.")
