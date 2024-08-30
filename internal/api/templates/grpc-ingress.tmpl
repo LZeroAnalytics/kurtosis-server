@@ -1,0 +1,27 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .ServiceName }}-grpc-ingress
+  namespace: {{ .Namespace }}
+  annotations:
+    nginx.ingress.kubernetes.io/backend-protocol: "GRPC"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    external-dns.alpha.kubernetes.io/hostname: {{ .ServiceName }}-{{ .SessionID }}.lzeroanalytics.com
+    external-dns.alpha.kubernetes.io/ttl: "30"
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: {{ .ServiceName }}-{{ .SessionID }}.lzeroanalytics.com
+    http:
+      paths:
+      {{- range .Ports }}
+        - path: /
+          pathType: Prefix
+          backend:
+            service:
+              name: {{ $.ServiceName }}
+              port:
+                number: {{ .Port }}
+      {{- end }}

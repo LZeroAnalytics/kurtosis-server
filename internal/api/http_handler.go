@@ -54,9 +54,7 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Error storing session: "+err.Error(), http.StatusInternalServerError)
 		deletionDate := time.Now().Format(time.RFC3339)
 		util.UpdateNetworkStatus(enclaveName, "Error", &deletionDate)
-		if err != nil {
-			log.Printf("Failed to update network status: %v", err)
-		}
+		log.Printf("Failed to update network status: %v", err)
 		return
 	}
 
@@ -153,21 +151,7 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Create ingresses for services
-		for _, serviceMapping := range runPackageMessage.ServiceMappings {
-			ingressData := IngressData{
-				ServiceName: serviceMapping.ServiceName,
-				SessionID:   sessionID[:18],
-				Namespace:   "kt-" + enclaveName,
-				Ports:       serviceMapping.Ports,
-			}
-
-			if err := createIngress(ingressData); err != nil {
-				deletionDate := time.Now().Format(time.RFC3339)
-				util.UpdateNetworkStatus(enclaveName, "Error", &deletionDate)
-				kurtosisCtx.DestroyEnclave(bgContext, enclaveName)
-				log.Printf("Failed to create ingress for service %s: %v", serviceMapping.ServiceName, err)
-			}
-		}
+		createIngresses(bgContext, kurtosisCtx, runPackageMessage, sessionID, enclaveName)
 
 		status, err = util.GetNetworkStatus(enclaveName)
 		if err != nil {
