@@ -315,7 +315,10 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 		for _, serviceContext := range serviceContexts {
 			serviceName := string(serviceContext.GetServiceName())
 			// Check if the service name contains "node"
-			if !strings.Contains(serviceName, "node") && !strings.Contains(serviceName, "el-") && !strings.Contains(serviceName, "cl-") {
+			if !strings.Contains(serviceName, "node") &&
+				!strings.Contains(serviceName, "el-") &&
+				!strings.Contains(serviceName, "cl-") &&
+				!strings.Contains(serviceName, "hermes") {
 				continue
 			}
 
