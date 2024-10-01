@@ -240,7 +240,12 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 						"type": "progress",
 					}
 					outputJSON, err = json.Marshal(output)
-					err = util.UpdateNetworkStatus(enclaveName, "Operational", nil)
+					if status == "SubscriptionPending" {
+						err = util.UpdateNetworkStatus(enclaveName, "SubscriptionOperational", nil)
+					} else {
+						err = util.UpdateNetworkStatus(enclaveName, "Operational", nil)
+					}
+
 					if err != nil {
 						log.Printf("Failed to update network status: %v", err)
 					}
