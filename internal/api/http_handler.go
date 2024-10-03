@@ -393,11 +393,19 @@ func StopNetwork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if status == "Error" {
+	// Determine the new status based on the current status
+	newStatus := "Terminated"
+
+	// Set the status to SubscriptionTerminated if it's in a subscription state
+	if status == "SubscriptionPending" || status == "SubscriptionOperational" || status == "SubscriptionError" {
+		newStatus = "SubscriptionTerminated"
+	}
+
+	if status == "Error" || status == "SubscriptionError" {
 		log.Printf("Network %s is in Error state. Skipping enclave deletion.", enclaveIdentifier)
 
 		// Update the network status to Terminated
-		err = util.UpdateNetworkStatus(enclaveIdentifier, "Terminated", nil)
+		err = util.UpdateNetworkStatus(enclaveIdentifier, newStatus, nil)
 		if err != nil {
 			log.Printf("Failed to update network status: %v", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -406,7 +414,7 @@ func StopNetwork(w http.ResponseWriter, r *http.Request) {
 	} else {
 		// Update the network status to Terminated
 		deletionDate := time.Now().Format(time.RFC3339)
-		err = util.UpdateNetworkStatus(enclaveIdentifier, "Terminated", &deletionDate)
+		err = util.UpdateNetworkStatus(enclaveIdentifier, newStatus, &deletionDate)
 		if err != nil {
 			log.Printf("Failed to update network status: %v", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -632,6 +640,15 @@ func ExecServiceCommand(w http.ResponseWriter, r *http.Request) {
 }
 
 func CheckOwnership(r *http.Request, networkID string) error {
+	predefinedAPIKey := "6a3bc0d4-d0fa-40f3-bb16-1a3a16fc5082"
+
+	// Allow requests that use API key
+	apiKey := r.Header.Get("x-api-key")
+	if apiKey == predefinedAPIKey {
+		// If the API key matches, bypass ownership check
+		return nil
+	}
+
 	authorizationHeader := r.Header.Get("Authorization")
 
 	if authorizationHeader == "" {
