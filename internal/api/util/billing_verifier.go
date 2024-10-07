@@ -17,12 +17,21 @@ type BillingResponse struct {
 // CheckUserBilling checks if the user has billings
 func CheckUserBilling(authorizationHeader string) (bool, error) {
 
+	// Define the specific API key that should be accepted
+	const apiKey = "6a3bc0d4-d0fa-40f3-bb16-1a3a16fc5082"
+
 	parts := strings.Split(authorizationHeader, " ")
 	if len(parts) != 2 || parts[0] != "Bearer" {
 		return false, fmt.Errorf("invalid authorization header format")
 	}
 
 	token := parts[1]
+
+	// Check if the token matches the specific API key
+	if token == apiKey {
+		// Bypass the billing API check and return true
+		return true, nil
+	}
 
 	// Call the billing API
 	billingAPIURL := "https://lzerobilling.lzeroanalytics.com/customers/me/billing"
