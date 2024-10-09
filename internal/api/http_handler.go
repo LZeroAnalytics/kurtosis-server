@@ -87,21 +87,6 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("Got authorization header: %v", authorizationHeader)
 
-	hasBillings, err := util.CheckUserBilling(authorizationHeader)
-	if err != nil {
-		deletionDate := time.Now().Format(time.RFC3339)
-		util.UpdateNetworkStatus(enclaveName, "Error", &deletionDate)
-		http.Error(w, "Error checking billings: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	if !hasBillings {
-		deletionDate := time.Now().Format(time.RFC3339)
-		util.UpdateNetworkStatus(enclaveName, "Error", &deletionDate)
-		http.Error(w, "User does not have billing enabled", http.StatusUnauthorized)
-		return
-	}
-
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
