@@ -117,7 +117,7 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		enclaveCtx, err := kurtosisCtx.CreateEnclave(bgContext, enclaveName)
+		enclaveCtx, err := kurtosisCtx.CreateProductionEnclave(bgContext, enclaveName)
 		if err != nil {
 			deletionDate := time.Now().Format(time.RFC3339)
 			util.UpdateNetworkStatus(enclaveName, "Error", &deletionDate)
