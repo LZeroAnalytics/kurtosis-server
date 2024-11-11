@@ -736,3 +736,37 @@ func GetServiceLogsBatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 }
+
+// PatchIngressesHandler updates ingresses with new hostname
+func PatchIngressesHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
+		return
+	}
+
+	requiredAPIKey := "6a3bc0d4-d0fa-40f3-bb16-1a3a16fc5082"
+	apiKey := r.Header.Get("x-api-key")
+	if apiKey != requiredAPIKey {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var requestData struct {
+		IngressHostnames map[string]string `json:"ingressHostnames"`
+		Namespace        string            `json:"namespace"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&requestData); err != nil {
+		http.Error(w, "Failed to decode request body", http.StatusBadRequest)
+		return
+	}
+
+	err := patchIngressesHostnames(requestData.IngressHostnames, requestData.Namespace)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to patch ingresses: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("Ingress hostnames patched successfully"))
+}

@@ -9,6 +9,7 @@ import (
 	"io/ioutil"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/scheme"
 	"kurtosis-server/internal/api/util"
 	"log"
@@ -195,4 +196,59 @@ func handleIngressError(bgContext context.Context, kurtosisCtx *kurtosis_context
 	util.UpdateNetworkStatus(enclaveName, "Error", &deletionDate)
 	kurtosisCtx.DestroyEnclave(bgContext, enclaveName)
 	log.Printf("Failed to create ingress for service %s: %v", serviceName, err)
+}
+
+// Function to update hostnames for multiple ingresses
+func patchIngressesHostnames(ingressHostnames map[string]string, namespace string) error {
+	config, err := clientcmd.BuildConfigFromFlags("", "/home/ubuntu/.kube/config")
+	if err != nil {
+		return err
+	}
+
+	dynClient, err := dynamic.NewForConfig(config)
+	if err != nil {
+		return err
+	}
+
+	resource := schema.GroupVersionResource{
+		Group:    "networking.k8s.io",
+		Version:  "v1",
+		Resource: "ingresses",
+	}
+
+	for ingressName, hostname := range ingressHostnames {
+		// Create patch payload to update hostname in annotations
+		annotationPatch := []byte(`[
+			{"op": "replace", "path": "/metadata/annotations/external-dns.alpha.kubernetes.io~1hostname", "value": "` + hostname + `"}
+		]`)
+
+		_, err = dynClient.Resource(resource).Namespace(namespace).Patch(
+			context.Background(),
+			ingressName,
+			types.JSONPatchType,
+			annotationPatch,
+			metav1.PatchOptions{},
+		)
+		if err != nil {
+			return fmt.Errorf("failed to patch annotations for ingress %s: %w", ingressName, err)
+		}
+
+		// Create patch payload to update hostname in spec rules
+		specPatch := []byte(`[
+			{"op": "replace", "path": "/spec/rules/0/host", "value": "` + hostname + `"}
+		]`)
+
+		_, err = dynClient.Resource(resource).Namespace(namespace).Patch(
+			context.Background(),
+			ingressName,
+			types.JSONPatchType,
+			specPatch,
+			metav1.PatchOptions{},
+		)
+		if err != nil {
+			return fmt.Errorf("failed to patch spec rules for ingress %s: %w", ingressName, err)
+		}
+	}
+
+	return nil
 }
