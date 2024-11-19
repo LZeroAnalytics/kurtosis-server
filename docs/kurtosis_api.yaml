@@ -1,0 +1,259 @@
+openapi: 3.0.0
+info:
+  title: LZero Kurtosis API
+  description: API documentation for the LZero Kurtosis platform.
+  version: 1.0.0
+servers:
+  - url: https://kurtosis.lzeroanalytics.com
+paths:
+  /:
+    get:
+      summary: Root Endpoint
+      description: Displays a welcome message for the Kurtosis API Server.
+      responses:
+        '200':
+          description: Welcome message returned successfully
+          content:
+            text/plain:
+              schema:
+                type: string
+  /services:
+    get:
+      summary: Get Services Info
+      description: Retrieves detailed information about the services in a given network.
+      parameters:
+        - name: enclaveIdentifier
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of services returned successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  $ref: '#/components/schemas/ServiceInfo'
+  /stream-logs:
+    get:
+      summary: Stream Service Logs
+      description: Streams the logs of a specific service in the network.
+      parameters:
+        - name: enclaveIdentifier
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: serviceName
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '101':
+          description: WebSocket upgrade to stream service logs
+  /node-logs:
+    get:
+      summary: Get Service Logs Batch
+      description: Retrieves a batch of logs for a specific service based on index range.
+      parameters:
+        - name: enclaveIdentifier
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: serviceName
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: start
+          in: query
+          schema:
+            type: integer
+        - name: end
+          in: query
+          schema:
+            type: integer
+        - name: last
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Logs retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  serviceName:
+                    type: string
+                  startIndex:
+                    type: integer
+                  endIndex:
+                    type: integer
+                  logs:
+                    type: array
+                    items:
+                      type: string
+  /stream:
+    get:
+      summary: Stream Output
+      description: Streams the output of the current session.
+      parameters:
+        - name: sessionID
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '101':
+          description: WebSocket upgrade to stream output
+  /start:
+    post:
+      summary: Start Network
+      description: Starts a new network using the given enclave name and session ID.
+      parameters:
+        - name: enclaveName
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: sessionID
+          in: query
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RunPackageMessage'
+      responses:
+        '200':
+          description: Network initiated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+  /stop:
+    post:
+      summary: Stop Network
+      description: Stops an existing network by enclave identifier.
+      parameters:
+        - name: enclaveIdentifier
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Network termination process started successfully
+  /exec:
+    post:
+      summary: Execute Service Command
+      description: Executes a command on a specific service in the given network.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExecCommandRequest'
+      responses:
+        '200':
+          description: Command executed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  exit_code:
+                    type: integer
+                  logs:
+                    type: string
+  /patch-hostnames:
+    post:
+      summary: Patch Ingresses
+      description: Updates ingresses with new hostnames.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ingressHostnames:
+                  type: object
+                  additionalProperties:
+                    type: string
+                namespace:
+                  type: string
+      responses:
+        '200':
+          description: Ingress hostnames patched successfully
+components:
+  schemas:
+    RunPackageMessage:
+      type: object
+      properties:
+        package_url:
+          type: string
+        params:
+          type: object
+          additionalProperties:
+            type: string
+        service_mappings:
+          type: array
+          items:
+            $ref: '#/components/schemas/ServiceMapping'
+    ServiceMapping:
+      type: object
+      properties:
+        service_name:
+          type: string
+        ports:
+          type: array
+          items:
+            $ref: '#/components/schemas/Port'
+    ExecCommandRequest:
+      type: object
+      properties:
+        enclaveIdentifier:
+          type: string
+        serviceName:
+          type: string
+        command:
+          type: array
+          items:
+            type: string
+    ServiceInfo:
+      type: object
+      properties:
+        service_uuid:
+          type: string
+        private_ip_address:
+          type: string
+        private_ports:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/Port'
+        public_ip_address:
+          type: string
+        public_ports:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/Port'
+    Port:
+      type: object
+      properties:
+        port:
+          type: integer
+        port_name:
+          type: string

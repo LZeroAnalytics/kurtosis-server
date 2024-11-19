@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/kurtosis-tech/kurtosis/api/golang/core/kurtosis_core_rpc_api_bindings"
+	"github.com/kurtosis-tech/kurtosis/api/golang/core/lib/enclaves"
 	"github.com/kurtosis-tech/kurtosis/api/golang/core/lib/services"
 	"github.com/kurtosis-tech/kurtosis/api/golang/core/lib/starlark_run_config"
 	"github.com/kurtosis-tech/kurtosis/api/golang/engine/lib/kurtosis_context"
@@ -13,6 +14,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -31,6 +33,74 @@ type ExecCommandRequest struct {
 	EnclaveIdentifier string   `json:"enclaveIdentifier"`
 	ServiceName       string   `json:"serviceName"`
 	Command           []string `json:"command"`
+}
+
+type CachedContexts struct {
+	EnclaveContexts map[string]*enclaves.EnclaveContext
+	ServiceContexts map[string]*services.ServiceContext
+	Mutex           sync.Mutex
+}
+
+var (
+	cachedKurtosisCtx     *kurtosis_context.KurtosisContext
+	cachedKurtosisCtxOnce sync.Once
+	cachedContexts        = CachedContexts{
+		EnclaveContexts: make(map[string]*enclaves.EnclaveContext),
+		ServiceContexts: make(map[string]*services.ServiceContext),
+	}
+)
+
+func getKurtosisContext() (*kurtosis_context.KurtosisContext, error) {
+	var err error
+	cachedKurtosisCtxOnce.Do(func() {
+		cachedKurtosisCtx, err = kurtosis_context.NewKurtosisContextFromLocalEngine()
+	})
+	return cachedKurtosisCtx, err
+}
+
+func getCachedEnclaveContext(enclaveIdentifier string) (*enclaves.EnclaveContext, error) {
+	cachedContexts.Mutex.Lock()
+	defer cachedContexts.Mutex.Unlock()
+
+	if ctx, exists := cachedContexts.EnclaveContexts[enclaveIdentifier]; exists {
+		return ctx, nil
+	}
+
+	kurtosisCtx, err := getKurtosisContext()
+	if err != nil {
+		return nil, err
+	}
+
+	enclaveCtx, err := kurtosisCtx.GetEnclaveContext(context.Background(), enclaveIdentifier)
+	if err != nil {
+		return nil, err
+	}
+
+	cachedContexts.EnclaveContexts[enclaveIdentifier] = enclaveCtx
+	return enclaveCtx, nil
+}
+
+func getCachedServiceContext(enclaveIdentifier, serviceName string) (*services.ServiceContext, error) {
+	cachedContexts.Mutex.Lock()
+	defer cachedContexts.Mutex.Unlock()
+
+	key := fmt.Sprintf("%s:%s", enclaveIdentifier, serviceName)
+	if ctx, exists := cachedContexts.ServiceContexts[key]; exists {
+		return ctx, nil
+	}
+
+	enclaveCtx, err := getCachedEnclaveContext(enclaveIdentifier)
+	if err != nil {
+		return nil, err
+	}
+
+	serviceCtx, err := enclaveCtx.GetServiceContext(serviceName)
+	if err != nil {
+		return nil, err
+	}
+
+	cachedContexts.ServiceContexts[key] = serviceCtx
+	return serviceCtx, nil
 }
 
 func HandleRoot(w http.ResponseWriter, r *http.Request) {
@@ -99,7 +169,7 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 
 		bgContext := context.Background()
 
-		kurtosisCtx, err := kurtosis_context.NewKurtosisContextFromLocalEngine()
+		kurtosisCtx, err := getKurtosisContext()
 		if err != nil {
 			deletionDate := time.Now().Format(time.RFC3339)
 			util.UpdateNetworkStatus(enclaveName, "Error", &deletionDate)
@@ -118,6 +188,7 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 		}
 
 		enclaveCtx, err := kurtosisCtx.CreateProductionEnclave(bgContext, enclaveName)
+		cachedContexts.EnclaveContexts[enclaveName] = enclaveCtx
 		if err != nil {
 			deletionDate := time.Now().Format(time.RFC3339)
 			util.UpdateNetworkStatus(enclaveName, "Error", &deletionDate)
@@ -304,6 +375,9 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 		// Iterate over service contexts
 		for _, serviceContext := range serviceContexts {
 			serviceName := string(serviceContext.GetServiceName())
+			key := fmt.Sprintf("%s:%s", enclaveName, serviceName)
+			cachedContexts.ServiceContexts[key] = serviceContext
+
 			// Check if the service name contains "node"
 			if !strings.Contains(serviceName, "node") &&
 				!strings.Contains(serviceName, "el-") &&
@@ -488,15 +562,8 @@ func GetServicesInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Initialize the Kurtosis context
-	kurtosisCtx, err := kurtosis_context.NewKurtosisContextFromLocalEngine()
-	if err != nil {
-		http.Error(w, "Failed to create Kurtosis context: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
 	// Get the EnclaveContext
-	enclaveCtx, err := kurtosisCtx.GetEnclaveContext(context.Background(), enclaveIdentifier)
+	enclaveCtx, err := getCachedEnclaveContext(enclaveIdentifier)
 	if err != nil {
 		http.Error(w, "Failed to get EnclaveContext: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -577,22 +644,8 @@ func ExecServiceCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Initialize the Kurtosis context
-	kurtosisCtx, err := kurtosis_context.NewKurtosisContextFromLocalEngine()
-	if err != nil {
-		http.Error(w, "Failed to create Kurtosis context: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	// Get the EnclaveContext
-	enclaveCtx, err := kurtosisCtx.GetEnclaveContext(context.Background(), req.EnclaveIdentifier)
-	if err != nil {
-		http.Error(w, "Failed to get EnclaveContext: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
 	// Get the ServiceContext
-	serviceCtx, err := enclaveCtx.GetServiceContext(req.ServiceName)
+	serviceCtx, err := getCachedServiceContext(req.EnclaveIdentifier, req.ServiceName)
 	if err != nil {
 		http.Error(w, "Failed to get ServiceContext: "+err.Error(), http.StatusInternalServerError)
 		return
