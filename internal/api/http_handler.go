@@ -87,9 +87,12 @@ func getCachedServiceContext(enclaveIdentifier, serviceName string) (*services.S
 	key := fmt.Sprintf("%s:%s", enclaveIdentifier, serviceName)
 	log.Printf("Using this key: %s", key)
 
+	log.Println("Attempting to acquire lock for ServiceContexts")
 	cachedContexts.Mutex.Lock()
+	log.Println("Successfully acquired lock for ServiceContexts")
 	serviceCtx, exists := cachedContexts.ServiceContexts[key]
 	cachedContexts.Mutex.Unlock()
+	log.Println("Released lock for ServiceContexts")
 
 	if exists {
 		return serviceCtx, nil
@@ -202,7 +205,6 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 		}
 
 		enclaveCtx, err := kurtosisCtx.CreateProductionEnclave(bgContext, enclaveName)
-		cachedContexts.EnclaveContexts[enclaveName] = enclaveCtx
 		if err != nil {
 			deletionDate := time.Now().Format(time.RFC3339)
 			util.UpdateNetworkStatus(enclaveName, "Error", &deletionDate)
@@ -389,8 +391,6 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 		// Iterate over service contexts
 		for _, serviceContext := range serviceContexts {
 			serviceName := string(serviceContext.GetServiceName())
-			key := fmt.Sprintf("%s:%s", enclaveName, serviceName)
-			cachedContexts.ServiceContexts[key] = serviceContext
 
 			// Check if the service name contains "node"
 			if !strings.Contains(serviceName, "node") &&
