@@ -645,7 +645,9 @@ func ExecServiceCommand(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get the ServiceContext
+	log.Printf("Checked ownership and getting service context for %v", req.ServiceName)
 	serviceCtx, err := getCachedServiceContext(req.EnclaveIdentifier, req.ServiceName)
+	log.Printf("Service context error: %v", err)
 	if err != nil {
 		http.Error(w, "Failed to get ServiceContext: "+err.Error(), http.StatusInternalServerError)
 		return
