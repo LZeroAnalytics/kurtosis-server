@@ -51,7 +51,6 @@ var (
 )
 
 func getKurtosisContext() (*kurtosis_context.KurtosisContext, error) {
-	log.Println("Retrieving kurtosis context...")
 	var err error
 	cachedKurtosisCtxOnce.Do(func() {
 		cachedKurtosisCtx, err = kurtosis_context.NewKurtosisContextFromLocalEngine()
@@ -61,19 +60,15 @@ func getKurtosisContext() (*kurtosis_context.KurtosisContext, error) {
 
 func getCachedEnclaveContext(enclaveIdentifier string) (*enclaves.EnclaveContext, error) {
 
-	log.Println("Retrieving enclave context...")
 	if ctx, exists := cachedContexts.EnclaveContexts[enclaveIdentifier]; exists {
-		log.Println("Found enclave context...")
 		return ctx, nil
 	}
 
-	log.Println("Call get kurtosis context...")
 	kurtosisCtx, err := getKurtosisContext()
 	if err != nil {
 		return nil, err
 	}
 
-	log.Println("Retrieving enclave context from kurtosis context...")
 	enclaveCtx, err := kurtosisCtx.GetEnclaveContext(context.Background(), enclaveIdentifier)
 	if err != nil {
 		return nil, err
@@ -85,14 +80,10 @@ func getCachedEnclaveContext(enclaveIdentifier string) (*enclaves.EnclaveContext
 
 func getCachedServiceContext(enclaveIdentifier, serviceName string) (*services.ServiceContext, error) {
 	key := fmt.Sprintf("%s:%s", enclaveIdentifier, serviceName)
-	log.Printf("Using this key: %s", key)
 
-	log.Println("Attempting to acquire lock for ServiceContexts")
 	cachedContexts.Mutex.Lock()
-	log.Println("Successfully acquired lock for ServiceContexts")
 	serviceCtx, exists := cachedContexts.ServiceContexts[key]
 	cachedContexts.Mutex.Unlock()
-	log.Println("Released lock for ServiceContexts")
 
 	if exists {
 		return serviceCtx, nil
@@ -100,19 +91,13 @@ func getCachedServiceContext(enclaveIdentifier, serviceName string) (*services.S
 
 	enclaveCtx, err := getCachedEnclaveContext(enclaveIdentifier)
 	if err != nil {
-		log.Printf("Error retrieving enclave context: %v", err)
 		return nil, err
 	}
-
-	log.Println("Got enclave context")
 
 	serviceCtx, err = enclaveCtx.GetServiceContext(serviceName)
 	if err != nil {
-		log.Printf("Error retrieving service context: %v", err)
 		return nil, err
 	}
-
-	log.Println("Got service context")
 
 	cachedContexts.Mutex.Lock()
 	cachedContexts.ServiceContexts[key] = serviceCtx
@@ -205,6 +190,9 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 		}
 
 		enclaveCtx, err := kurtosisCtx.CreateProductionEnclave(bgContext, enclaveName)
+		cachedContexts.Mutex.Lock()
+		cachedContexts.EnclaveContexts[enclaveName] = enclaveCtx
+		cachedContexts.Mutex.Unlock()
 		if err != nil {
 			deletionDate := time.Now().Format(time.RFC3339)
 			util.UpdateNetworkStatus(enclaveName, "Error", &deletionDate)
@@ -391,6 +379,10 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 		// Iterate over service contexts
 		for _, serviceContext := range serviceContexts {
 			serviceName := string(serviceContext.GetServiceName())
+			key := fmt.Sprintf("%s:%s", enclaveName, serviceName)
+			cachedContexts.Mutex.Lock()
+			cachedContexts.ServiceContexts[key] = serviceContext
+			cachedContexts.Mutex.Unlock()
 
 			// Check if the service name contains "node"
 			if !strings.Contains(serviceName, "node") &&
