@@ -84,20 +84,30 @@ func getCachedServiceContext(enclaveIdentifier, serviceName string) (*services.S
 	cachedContexts.Mutex.Lock()
 	defer cachedContexts.Mutex.Unlock()
 
+	for key := range cachedContexts.ServiceContexts {
+		log.Println(key)
+	}
 	key := fmt.Sprintf("%s:%s", enclaveIdentifier, serviceName)
+	log.Printf("Using this key: %s", key)
 	if ctx, exists := cachedContexts.ServiceContexts[key]; exists {
 		return ctx, nil
 	}
 
 	enclaveCtx, err := getCachedEnclaveContext(enclaveIdentifier)
 	if err != nil {
+		log.Printf("Error retrieving enclave context: %v", err)
 		return nil, err
 	}
 
+	log.Println("Got enclave context")
+
 	serviceCtx, err := enclaveCtx.GetServiceContext(serviceName)
 	if err != nil {
+		log.Printf("Error retrieving service context: %v", err)
 		return nil, err
 	}
+
+	log.Println("Got service context")
 
 	cachedContexts.ServiceContexts[key] = serviceCtx
 	return serviceCtx, nil
