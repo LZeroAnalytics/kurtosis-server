@@ -5,6 +5,8 @@ info:
   version: 1.0.0
 servers:
   - url: https://kurtosis.lzeroanalytics.com
+security:
+  - ApiKeyAuth: []
 paths:
   /:
     get:
@@ -159,6 +161,8 @@ paths:
   /exec:
     post:
       summary: Execute Service Command
+      security:
+        - ApiKeyAuth: []
       description: Executes a command on a specific service in the given network.
       requestBody:
         required: true
@@ -199,6 +203,11 @@ paths:
         '200':
           description: Ingress hostnames patched successfully
 components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: x-api-key
   schemas:
     RunPackageMessage:
       type: object
