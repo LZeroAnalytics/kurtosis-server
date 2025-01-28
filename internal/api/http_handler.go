@@ -112,6 +112,12 @@ func HandleRoot(w http.ResponseWriter, r *http.Request) {
 func StartNetwork(w http.ResponseWriter, r *http.Request) {
 	enclaveName := r.URL.Query().Get("enclaveName")
 	sessionID := r.URL.Query().Get("sessionID")
+	demo := r.URL.Query().Get("demo")
+
+	isDemoMode := false
+	if demo == "true" {
+		isDemoMode = true
+	}
 
 	if sessionID == "" {
 		http.Error(w, "Session ID missing", http.StatusBadRequest)
@@ -179,7 +185,7 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		status, err := util.GetNetworkStatus(enclaveName)
+		status, err := util.GetNetworkStatus(enclaveName, isDemoMode)
 		if err != nil {
 			log.Printf("Failed to retrieve network status: %v", err)
 			return
@@ -200,7 +206,7 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		status, err = util.GetNetworkStatus(enclaveName)
+		status, err = util.GetNetworkStatus(enclaveName, isDemoMode)
 		if err != nil {
 			log.Printf("Failed to retrieve network status: %v", err)
 			return
@@ -213,7 +219,7 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 		// Create ingresses for services
 		createIngresses(bgContext, kurtosisCtx, runPackageMessage, sessionID, enclaveName)
 
-		status, err = util.GetNetworkStatus(enclaveName)
+		status, err = util.GetNetworkStatus(enclaveName, isDemoMode)
 		if err != nil {
 			log.Printf("Failed to retrieve network status: %v", err)
 			return
@@ -271,7 +277,7 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 				outputJSON, err = json.Marshal(output)
 			case *kurtosis_core_rpc_api_bindings.StarlarkRunResponseLine_Error:
 				log.Printf("Error during Starlark execution: %v", detail.Error)
-				status, err := util.GetNetworkStatus(enclaveName)
+				status, err := util.GetNetworkStatus(enclaveName, isDemoMode)
 				if err != nil {
 					log.Printf("Failed to retrieve network status: %v", err)
 					return
@@ -451,7 +457,7 @@ func StopNetwork(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get the current network status
-	status, err := util.GetNetworkStatus(enclaveIdentifier)
+	status, err := util.GetNetworkStatus(enclaveIdentifier, false)
 	if err != nil {
 		log.Printf("Failed to get network status: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)

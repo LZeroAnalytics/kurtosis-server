@@ -54,7 +54,11 @@ func makeGraphqlRequest(query string, variables map[string]interface{}) ([]byte,
 	return body, nil
 }
 
-func GetNetworkStatus(networkID string) (string, error) {
+func GetNetworkStatus(networkID string, isDemoMode bool) (string, error) {
+	if isDemoMode {
+		return "Pending", nil
+	}
+
 	query := `query GetNetwork($id: ID!) {
 		getNetwork(id: $id) {
 			id
