@@ -139,7 +139,7 @@ func createGrpcIngress(data IngressData) error {
 }
 
 // Updated function to handle services with both gRPC and non-gRPC ports
-func createIngresses(bgContext context.Context, kurtosisCtx *kurtosis_context.KurtosisContext, runPackageMessage RunPackageMessage, sessionID string, enclaveName string) {
+func createIngresses(bgContext context.Context, kurtosisCtx *kurtosis_context.KurtosisContext, runPackageMessage RunPackageMessage, sessionID string, enclaveName string, isDemoMode bool) {
 	for _, serviceMapping := range runPackageMessage.ServiceMappings {
 		ingressData := IngressData{
 			ServiceName: serviceMapping.ServiceName,
@@ -169,7 +169,7 @@ func createIngresses(bgContext context.Context, kurtosisCtx *kurtosis_context.Ku
 			}
 			err := createGrpcIngress(grpcIngressData)
 			if err != nil {
-				handleIngressError(bgContext, kurtosisCtx, err, enclaveName, serviceMapping.ServiceName)
+				handleIngressError(bgContext, kurtosisCtx, err, enclaveName, serviceMapping.ServiceName, isDemoMode)
 				continue
 			}
 		}
@@ -184,16 +184,16 @@ func createIngresses(bgContext context.Context, kurtosisCtx *kurtosis_context.Ku
 			}
 			err := createIngress(nonGrpcIngressData)
 			if err != nil {
-				handleIngressError(bgContext, kurtosisCtx, err, enclaveName, serviceMapping.ServiceName)
+				handleIngressError(bgContext, kurtosisCtx, err, enclaveName, serviceMapping.ServiceName, isDemoMode)
 			}
 		}
 	}
 }
 
 // Handle ingress creation errors
-func handleIngressError(bgContext context.Context, kurtosisCtx *kurtosis_context.KurtosisContext, err error, enclaveName, serviceName string) {
+func handleIngressError(bgContext context.Context, kurtosisCtx *kurtosis_context.KurtosisContext, err error, enclaveName, serviceName string, isDemoMode bool) {
 	deletionDate := time.Now().Format(time.RFC3339)
-	util.UpdateNetworkStatus(enclaveName, "Error", &deletionDate)
+	util.UpdateNetworkStatus(enclaveName, "Error", &deletionDate, isDemoMode)
 	kurtosisCtx.DestroyEnclave(bgContext, enclaveName)
 	log.Printf("Failed to create ingress for service %s: %v", serviceName, err)
 }

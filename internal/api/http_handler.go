@@ -131,7 +131,7 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, "Error storing session: "+err.Error(), http.StatusInternalServerError)
 		deletionDate := time.Now().Format(time.RFC3339)
-		util.UpdateNetworkStatus(enclaveName, "Error", &deletionDate)
+		util.UpdateNetworkStatus(enclaveName, "Error", &deletionDate, isDemoMode)
 		log.Printf("Failed to update network status: %v", err)
 		return
 	}
@@ -141,7 +141,7 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 	err = json.NewDecoder(r.Body).Decode(&runPackageMessage)
 	if err != nil {
 		deletionDate := time.Now().Format(time.RFC3339)
-		util.UpdateNetworkStatus(enclaveName, "Error", &deletionDate)
+		util.UpdateNetworkStatus(enclaveName, "Error", &deletionDate, isDemoMode)
 		http.Error(w, "Invalid message format: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -149,7 +149,7 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 	paramsJSON, err := json.Marshal(runPackageMessage.Params)
 	if err != nil {
 		deletionDate := time.Now().Format(time.RFC3339)
-		util.UpdateNetworkStatus(enclaveName, "Error", &deletionDate)
+		util.UpdateNetworkStatus(enclaveName, "Error", &deletionDate, isDemoMode)
 		http.Error(w, "Failed to serialize parameters: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -158,7 +158,7 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 
 	if authorizationHeader == "" {
 		deletionDate := time.Now().Format(time.RFC3339)
-		util.UpdateNetworkStatus(enclaveName, "Error", &deletionDate)
+		util.UpdateNetworkStatus(enclaveName, "Error", &deletionDate, isDemoMode)
 		http.Error(w, "Authorization header missing", http.StatusUnauthorized)
 		return
 	}
@@ -180,7 +180,7 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 		kurtosisCtx, err := getKurtosisContext()
 		if err != nil {
 			deletionDate := time.Now().Format(time.RFC3339)
-			util.UpdateNetworkStatus(enclaveName, "Error", &deletionDate)
+			util.UpdateNetworkStatus(enclaveName, "Error", &deletionDate, isDemoMode)
 			http.Error(w, "Failed to create Kurtosis context: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -201,7 +201,7 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 		cachedContexts.Mutex.Unlock()
 		if err != nil {
 			deletionDate := time.Now().Format(time.RFC3339)
-			util.UpdateNetworkStatus(enclaveName, "Error", &deletionDate)
+			util.UpdateNetworkStatus(enclaveName, "Error", &deletionDate, isDemoMode)
 			http.Error(w, "Failed to create enclave: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -217,7 +217,7 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Create ingresses for services
-		createIngresses(bgContext, kurtosisCtx, runPackageMessage, sessionID, enclaveName)
+		createIngresses(bgContext, kurtosisCtx, runPackageMessage, sessionID, enclaveName, isDemoMode)
 
 		status, err = util.GetNetworkStatus(enclaveName, isDemoMode)
 		if err != nil {
@@ -235,7 +235,7 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 		responseLines, _, err := enclaveCtx.RunStarlarkRemotePackage(bgContext, runPackageMessage.PackageURL, starlarkRunConfig)
 		if err != nil {
 			deletionDate := time.Now().Format(time.RFC3339)
-			util.UpdateNetworkStatus(enclaveName, "Error", &deletionDate)
+			util.UpdateNetworkStatus(enclaveName, "Error", &deletionDate, isDemoMode)
 			kurtosisCtx.DestroyEnclave(bgContext, enclaveName)
 			log.Printf("Failed to run Starlark package for session ID %s: %v", sessionID, err)
 			return
@@ -288,7 +288,7 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 				}
 				outputJSON = []byte("Error: " + detail.Error.String())
 				deletionDate := time.Now().Format(time.RFC3339)
-				err = util.UpdateNetworkStatus(enclaveName, "Error", &deletionDate)
+				err = util.UpdateNetworkStatus(enclaveName, "Error", &deletionDate, isDemoMode)
 				if err != nil {
 					log.Printf("Failed to update network status: %v", err)
 				}
@@ -307,9 +307,9 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 					}
 					outputJSON, err = json.Marshal(output)
 					if status == "SubscriptionPending" {
-						err = util.UpdateNetworkStatus(enclaveName, "SubscriptionOperational", nil)
+						err = util.UpdateNetworkStatus(enclaveName, "SubscriptionOperational", nil, isDemoMode)
 					} else {
-						err = util.UpdateNetworkStatus(enclaveName, "Operational", nil)
+						err = util.UpdateNetworkStatus(enclaveName, "Operational", nil, isDemoMode)
 					}
 
 					if err != nil {
@@ -339,7 +339,7 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 			err = util.StoreSession(sessionID, newRedisSession)
 			if err != nil {
 				deletionDate := time.Now().Format(time.RFC3339)
-				err = util.UpdateNetworkStatus(enclaveName, "Error", &deletionDate)
+				err = util.UpdateNetworkStatus(enclaveName, "Error", &deletionDate, isDemoMode)
 				kurtosisCtx.DestroyEnclave(bgContext, enclaveName)
 				log.Printf("Error storing session: %v", err)
 			}
@@ -443,6 +443,14 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 func StopNetwork(w http.ResponseWriter, r *http.Request) {
 	// Extract enclaveIdentifier from query parameters
 	enclaveIdentifier := r.URL.Query().Get("enclaveIdentifier")
+	demo := r.URL.Query().Get("demo")
+
+	isDemoMode := false
+
+	if demo == "true" {
+		isDemoMode = true
+	}
+
 	if enclaveIdentifier == "" {
 		http.Error(w, "Missing enclaveIdentifier query parameter", http.StatusBadRequest)
 		return
@@ -457,7 +465,7 @@ func StopNetwork(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get the current network status
-	status, err := util.GetNetworkStatus(enclaveIdentifier, false)
+	status, err := util.GetNetworkStatus(enclaveIdentifier, isDemoMode)
 	if err != nil {
 		log.Printf("Failed to get network status: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -476,7 +484,7 @@ func StopNetwork(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Network %s is in Error state. Skipping enclave deletion.", enclaveIdentifier)
 
 		// Update the network status to Terminated
-		err = util.UpdateNetworkStatus(enclaveIdentifier, newStatus, nil)
+		err = util.UpdateNetworkStatus(enclaveIdentifier, newStatus, nil, isDemoMode)
 		if err != nil {
 			log.Printf("Failed to update network status: %v", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -485,7 +493,7 @@ func StopNetwork(w http.ResponseWriter, r *http.Request) {
 	} else {
 		// Update the network status to Terminated
 		deletionDate := time.Now().Format(time.RFC3339)
-		err = util.UpdateNetworkStatus(enclaveIdentifier, newStatus, &deletionDate)
+		err = util.UpdateNetworkStatus(enclaveIdentifier, newStatus, &deletionDate, isDemoMode)
 		if err != nil {
 			log.Printf("Failed to update network status: %v", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)

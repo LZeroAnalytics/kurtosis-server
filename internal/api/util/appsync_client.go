@@ -92,7 +92,11 @@ func GetNetworkStatus(networkID string, isDemoMode bool) (string, error) {
 	return "", errors.New("could not retrieve network status")
 }
 
-func UpdateNetworkStatus(networkID, status string, deletionDate *string) error {
+func UpdateNetworkStatus(networkID, status string, deletionDate *string, isDemoMode bool) error {
+	if isDemoMode {
+		return nil
+	}
+
 	// Fetch the current version of the network
 	version, err := getNetworkVersion(networkID)
 	if err != nil {
