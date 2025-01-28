@@ -202,6 +202,7 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			deletionDate := time.Now().Format(time.RFC3339)
 			util.UpdateNetworkStatus(enclaveName, "Error", &deletionDate, isDemoMode)
+			log.Printf("Failed to create enclave %v", err)
 			http.Error(w, "Failed to create enclave: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
