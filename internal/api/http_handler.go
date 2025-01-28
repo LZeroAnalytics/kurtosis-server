@@ -229,6 +229,7 @@ func StartNetwork(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		log.Printf("Running starlark with the following params %v", string(paramsJSON))
 		starlarkRunOptions := starlark_run_config.WithSerializedParams(string(paramsJSON))
 		starlarkRunConfig := starlark_run_config.NewRunStarlarkConfig(starlarkRunOptions)
 
